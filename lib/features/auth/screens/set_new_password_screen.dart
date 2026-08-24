@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../domain/auth_repository.dart';
 import 'help_screen.dart';
 import 'login_screen.dart';
 
 class SetNewPasswordScreen extends StatefulWidget {
   final String email;
+  final AuthRepository authRepository;
 
-  const SetNewPasswordScreen({super.key, this.email = 'user@gmail.com'});
+  const SetNewPasswordScreen({
+    super.key,
+    required this.email,
+    required this.authRepository,
+  });
 
   @override
   State<SetNewPasswordScreen> createState() => _SetNewPasswordScreenState();
@@ -130,7 +136,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
     super.dispose();
   }
 
-  void _handleUpdatePassword() {
+  Future<void> _handleUpdatePassword() async {
     final newPass = _newPasswordController.text;
     final confirmPass = _confirmPasswordController.text;
 
@@ -173,20 +179,36 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
       return;
     }
 
+    final result = await widget.authRepository.resetPassword(
+      email: widget.email,
+      newPassword: newPass,
+    );
+
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Password updated successfully! Please log in.',
+          result.isSuccess
+              ? 'Password updated successfully! Please log in.'
+              : 'Could not update the password. Please try again.',
           style: GoogleFonts.montserrat(),
         ),
-        backgroundColor: const Color(0xFF0F751B),
+        backgroundColor:
+            result.isSuccess ? const Color(0xFF0F751B) : Colors.redAccent,
       ),
     );
+
+    if (!result.isSuccess) {
+      return;
+    }
 
     // Return all the way back to LoginScreen
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      MaterialPageRoute(
+        builder: (context) => LoginScreen(authRepository: widget.authRepository),
+      ),
       (route) => false,
     );
   }
@@ -648,7 +670,9 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
                                   Navigator.pushAndRemoveUntil(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => const LoginScreen(),
+                                      builder: (context) => LoginScreen(
+                                        authRepository: widget.authRepository,
+                                      ),
                                     ),
                                     (route) => false,
                                   );

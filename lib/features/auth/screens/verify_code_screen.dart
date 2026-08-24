@@ -2,13 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../domain/auth_repository.dart';
+import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'set_new_password_screen.dart';
 
 class VerifyCodeScreen extends StatefulWidget {
   final String email;
+  final AuthRepository authRepository;
 
-  const VerifyCodeScreen({super.key, this.email = 'user@gmail.com'});
+  const VerifyCodeScreen({
+    super.key,
+    required this.email,
+    required this.authRepository,
+  });
 
   @override
   State<VerifyCodeScreen> createState() => _VerifyCodeScreenState();
@@ -110,7 +117,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
   }
 
   // --- OTP Verification Action ---
-  void _handleVerify() {
+  Future<void> _handleVerify() async {
     final code = _otpControllers.map((c) => c.text).join();
 
     if (code.length < 6) {
@@ -126,17 +133,46 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
       return;
     }
 
+    final result = await widget.authRepository.verifyResetCode(
+      email: widget.email,
+      code: code,
+    );
+
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.failure == AuthFailure.invalidCode
+                ? 'That verification code is not valid.'
+                : 'Verification failed. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     // Navigate to SetNewPasswordScreen
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => SetNewPasswordScreen(email: widget.email),
+        builder: (context) => SetNewPasswordScreen(
+          email: widget.email,
+          authRepository: widget.authRepository,
+        ),
       ),
     );
   }
 
   // --- Resend Code Action ---
-  void _handleResendCode() {
+  Future<void> _handleResendCode() async {
+    await widget.authRepository.requestPasswordReset(email: widget.email);
+
+    if (!mounted) return;
+
     for (final c in _otpControllers) {
       c.clear();
     }

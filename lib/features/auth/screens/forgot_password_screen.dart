@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../domain/auth_repository.dart';
+import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'verify_code_screen.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
-  const ForgotPasswordScreen({super.key});
+  final AuthRepository authRepository;
+
+  const ForgotPasswordScreen({super.key, required this.authRepository});
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -97,7 +101,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
   }
 
   // --- Request Reset Code Action ---
-  void _handleRequestResetCode() {
+  Future<void> _handleRequestResetCode() async {
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
@@ -126,10 +130,33 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
       return;
     }
 
+    final result =
+        await widget.authRepository.requestPasswordReset(email: email);
+
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.failure == AuthFailure.unknownAccount
+                ? 'No account found for that email address.'
+                : 'Could not send a reset code. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     // Pass the entered email and open VerifyCodeScreen
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => VerifyCodeScreen(email: email)),
+      MaterialPageRoute(
+        builder: (context) =>
+            VerifyCodeScreen(email: email, authRepository: widget.authRepository),
+      ),
     );
   }
 

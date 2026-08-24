@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../domain/auth_repository.dart';
+import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  final AuthRepository authRepository;
+
+  const RegisterScreen({super.key, required this.authRepository});
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -437,7 +441,7 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
   }
 
-  void _handleSignUp() {
+  Future<void> _handleSignUp() async {
     final username = _usernameController.text.trim();
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
@@ -494,6 +498,28 @@ class _RegisterScreenState extends State<RegisterScreen>
       return;
     }
 
+    final result = await widget.authRepository.register(
+      username: username,
+      password: password,
+    );
+
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.failure == AuthFailure.usernameTaken
+                ? 'That username is already taken. Please choose another.'
+                : 'Registration failed. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -506,7 +532,9 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      MaterialPageRoute(
+        builder: (context) => LoginScreen(authRepository: widget.authRepository),
+      ),
     );
   }
 

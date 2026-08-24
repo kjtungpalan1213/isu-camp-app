@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../domain/auth_repository.dart';
 import 'login_screen.dart';
 
 class GetStartedScreen extends StatefulWidget {
-  const GetStartedScreen({super.key});
+  final AuthRepository authRepository;
+
+  const GetStartedScreen({super.key, required this.authRepository});
 
   @override
   State<GetStartedScreen> createState() => _GetStartedScreenState();
@@ -205,7 +208,8 @@ class _GetStartedScreenState extends State<GetStartedScreen>
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const LoginScreen(),
+                                builder: (context) =>
+                                    LoginScreen(authRepository: widget.authRepository),
                               ),
                             );
                           },
