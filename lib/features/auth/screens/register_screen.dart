@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../domain/auth_repository.dart';
+import '../domain/auth_result.dart';
+import '../domain/auth_session.dart';
 import 'help_screen.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  final AuthRepository authRepository;
+
+  const RegisterScreen({super.key, required this.authRepository});
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -28,6 +33,7 @@ class _RegisterScreenState extends State<RegisterScreen>
   late final Animation<double> _footerFade;
 
   final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
@@ -35,6 +41,7 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   bool _isAgreedToTerms = false;
+  bool _isSubmitting = false;
 
   // Real-time password requirement flags
   bool _hasMinLength = false;
@@ -123,6 +130,7 @@ class _RegisterScreenState extends State<RegisterScreen>
   void dispose() {
     _controller.dispose();
     _usernameController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -437,12 +445,14 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
   }
 
-  void _handleSignUp() {
+  Future<void> _handleSignUp() async {
+    if (_isSubmitting) return;
     final username = _usernameController.text.trim();
+    final email = _emailController.text.trim();
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
-    if (username.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
+    if (username.isEmpty || email.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -450,6 +460,19 @@ class _RegisterScreenState extends State<RegisterScreen>
             style: GoogleFonts.montserrat(),
           ),
           backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Please enter a valid email address.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.orangeAccent.shade700,
         ),
       );
       return;
@@ -494,6 +517,47 @@ class _RegisterScreenState extends State<RegisterScreen>
       return;
     }
 
+    _isSubmitting = true;
+    AuthResult<AuthSession> result;
+    try {
+      result = await widget.authRepository.register(
+        username: username,
+        password: password,
+        email: email,
+      );
+    } catch (error) {
+      _isSubmitting = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Something went wrong. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    _isSubmitting = false;
+
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.failure == AuthFailure.usernameTaken
+                ? 'That username is already taken. Please choose another.'
+                : 'Registration failed. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -506,7 +570,9 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      MaterialPageRoute(
+        builder: (context) => LoginScreen(authRepository: widget.authRepository),
+      ),
     );
   }
 
@@ -698,6 +764,45 @@ class _RegisterScreenState extends State<RegisterScreen>
                       const SizedBox(height: 6),
                       TextField(
                         controller: _usernameController,
+                        decoration: InputDecoration(
+                          hintText: '',
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey.shade400),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: Color(0xFF0F4D20),
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      // Email
+                      Text(
+                        'Email',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: _emailController,
+                        keyboardType: TextInputType.emailAddress,
                         decoration: InputDecoration(
                           hintText: '',
                           contentPadding: const EdgeInsets.symmetric(

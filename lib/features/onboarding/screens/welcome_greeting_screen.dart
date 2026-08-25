@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 class WelcomeGreetingScreen extends StatefulWidget {
   final String userName;
 
-  const WelcomeGreetingScreen({super.key, this.userName = 'Leader Justine'});
+  const WelcomeGreetingScreen({super.key, required this.userName});
 
   @override
   State<WelcomeGreetingScreen> createState() => _WelcomeGreetingScreenState();
