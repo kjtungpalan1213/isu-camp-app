@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'help_screen.dart';
@@ -27,7 +28,20 @@ class _RegisterScreenState extends State<RegisterScreen>
   // Footer Animation
   late final Animation<double> _footerFade;
 
+  // Form Step State (1: Enter Username & Email, 2: Code Verification, 3: Set Password)
+  int _currentStep = 1;
+
+  // Step 1 Controllers
   final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+
+  // Step 2 Controllers
+  final List<TextEditingController> _otpControllers =
+      List.generate(6, (index) => TextEditingController());
+  final List<FocusNode> _otpFocusNodes =
+      List.generate(6, (index) => FocusNode());
+
+  // Step 3 Controllers & Flags
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
@@ -58,16 +72,15 @@ class _RegisterScreenState extends State<RegisterScreen>
         curve: const Interval(0.0, 0.45, curve: Curves.easeInOutCubic),
       ),
     );
-    _headerSlide =
-        Tween<Offset>(
-          begin: const Offset(0.0, -0.20),
-          end: Offset.zero,
-        ).animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
-          ),
-        );
+    _headerSlide = Tween<Offset>(
+      begin: const Offset(0.0, -0.20),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
+      ),
+    );
 
     _cardScale = Tween<double>(begin: 0.85, end: 1.0).animate(
       CurvedAnimation(
@@ -112,8 +125,7 @@ class _RegisterScreenState extends State<RegisterScreen>
       _hasSpecialChar = text.contains(
         RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-\+=~/\\\[\]]'),
       );
-      _hasNoCommonPatterns =
-          text.isNotEmpty &&
+      _hasNoCommonPatterns = text.isNotEmpty &&
           !text.toLowerCase().contains('password') &&
           !text.contains('123456');
     });
@@ -123,9 +135,125 @@ class _RegisterScreenState extends State<RegisterScreen>
   void dispose() {
     _controller.dispose();
     _usernameController.dispose();
+    _emailController.dispose();
+    for (final c in _otpControllers) {
+      c.dispose();
+    }
+    for (final f in _otpFocusNodes) {
+      f.dispose();
+    }
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
+  }
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.montserrat()),
+        backgroundColor: color,
+      ),
+    );
+  }
+
+  // --- Step 1 Navigation: Validate Email & Username ---
+  void _handleStep1Continue() {
+    final username = _usernameController.text.trim();
+    final email = _emailController.text.trim();
+
+    if (username.isEmpty || email.isEmpty) {
+      _showSnackBar(
+          'Please fill in both Username and Email.', Colors.redAccent);
+      return;
+    }
+
+    final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
+    if (!emailRegex.hasMatch(email)) {
+      _showSnackBar(
+        'Please enter a valid email address.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
+
+    // Advance to Step 2: Code Verification inside the same card
+    setState(() {
+      _currentStep = 2;
+    });
+
+    _showSnackBar(
+      'Verification code sent to $email.',
+      const Color(0xFF0F751B),
+    );
+  }
+
+  // --- Step 2 Navigation: Validate 6-Digit Code ---
+  void _handleStep2Verify() {
+    final code = _otpControllers.map((c) => c.text).join();
+    if (code.length < 6) {
+      _showSnackBar(
+        'Please enter the full 6-digit verification code.',
+        Colors.redAccent,
+      );
+      return;
+    }
+
+    // Advance to Step 3: Password Creation inside the same card
+    setState(() {
+      _currentStep = 3;
+    });
+
+    _showSnackBar(
+      'Email verified! Now set a strong password.',
+      const Color(0xFF0F751B),
+    );
+  }
+
+  // --- Step 3 Navigation: Complete Sign Up ---
+  void _handleStep3Complete() {
+    final password = _passwordController.text;
+    final confirmPassword = _confirmPasswordController.text;
+
+    if (password.isEmpty || confirmPassword.isEmpty) {
+      _showSnackBar(
+          'Please enter and confirm your password.', Colors.redAccent);
+      return;
+    }
+
+    if (password != confirmPassword) {
+      _showSnackBar('Passwords do not match.', Colors.redAccent);
+      return;
+    }
+
+    if (!_hasMinLength ||
+        !_hasMixedCase ||
+        !_hasNumber ||
+        !_hasSpecialChar ||
+        !_hasNoCommonPatterns) {
+      _showSnackBar(
+        'Please meet all required password criteria.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
+
+    if (!_isAgreedToTerms) {
+      _showSnackBar(
+        'Please agree to the Terms & Conditions and Privacy Policy.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
+
+    _showSnackBar(
+      'Account created successfully! Please log in.',
+      const Color(0xFF0F751B),
+    );
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
   }
 
   // --- Terms and Conditions Dialog ---
@@ -147,7 +275,6 @@ class _RegisterScreenState extends State<RegisterScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Gold Banner Header
               Container(
                 color: const Color(0xFFECC700),
                 padding: const EdgeInsets.symmetric(vertical: 20),
@@ -161,8 +288,6 @@ class _RegisterScreenState extends State<RegisterScreen>
                   ),
                 ),
               ),
-
-              // Content
               Padding(
                 padding: const EdgeInsets.all(18.0),
                 child: Column(
@@ -185,7 +310,8 @@ class _RegisterScreenState extends State<RegisterScreen>
                             ),
                           ),
                           TextSpan(
-                            text: ', you agree to use the application responsibly and for its intended purpose of campus mapping and navigation.',
+                            text:
+                                ', you agree to use the application responsibly and for its intended purpose of campus mapping and navigation.',
                           ),
                         ],
                       ),
@@ -221,8 +347,6 @@ class _RegisterScreenState extends State<RegisterScreen>
                       ),
                     ),
                     const SizedBox(height: 18),
-
-                    // Proceed Button
                     Align(
                       alignment: Alignment.centerRight,
                       child: SizedBox(
@@ -279,7 +403,6 @@ class _RegisterScreenState extends State<RegisterScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Gold Banner Header
               Container(
                 color: const Color(0xFFECC700),
                 padding: const EdgeInsets.symmetric(vertical: 20),
@@ -293,8 +416,6 @@ class _RegisterScreenState extends State<RegisterScreen>
                   ),
                 ),
               ),
-
-              // Content
               Padding(
                 padding: const EdgeInsets.all(18.0),
                 child: Column(
@@ -316,7 +437,8 @@ class _RegisterScreenState extends State<RegisterScreen>
                             ),
                           ),
                           TextSpan(
-                            text: ' respects your privacy and collects only information needed to provide its services.',
+                            text:
+                                ' respects your privacy and collects only information needed to provide its services.',
                           ),
                         ],
                       ),
@@ -341,8 +463,6 @@ class _RegisterScreenState extends State<RegisterScreen>
                       ),
                     ),
                     const SizedBox(height: 18),
-
-                    // Proceed Button
                     Align(
                       alignment: Alignment.centerRight,
                       child: SizedBox(
@@ -380,7 +500,6 @@ class _RegisterScreenState extends State<RegisterScreen>
     );
   }
 
-  // Dialog Bullet point widget
   Widget _buildDialogBullet(String text, {String? boldGreenPrefix}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6.0),
@@ -437,79 +556,6 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
   }
 
-  void _handleSignUp() {
-    final username = _usernameController.text.trim();
-    final password = _passwordController.text;
-    final confirmPassword = _confirmPasswordController.text;
-
-    if (username.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Please fill in all fields.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
-    if (password != confirmPassword) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Passwords do not match.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
-    if (!_hasMinLength || !_hasMixedCase || !_hasNumber) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Please meet all required password criteria.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.orangeAccent.shade700,
-        ),
-      );
-      return;
-    }
-
-    if (!_isAgreedToTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Please agree to the Terms & Conditions and Privacy Policy.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.orangeAccent.shade700,
-        ),
-      );
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Account created successfully! Please log in.',
-          style: GoogleFonts.montserrat(),
-        ),
-        backgroundColor: const Color(0xFF0F751B),
-      ),
-    );
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-    );
-  }
-
   Widget _buildRequirementItem(String text, bool isMet) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2.0),
@@ -532,6 +578,676 @@ class _RegisterScreenState extends State<RegisterScreen>
                 fontSize: 10.5,
                 fontWeight: isMet ? FontWeight.w600 : FontWeight.w500,
                 color: isMet ? Colors.black87 : Colors.black54,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Step Indicator Widget ---
+  Widget _buildStepIndicator() {
+    return Row(
+      children: List.generate(3, (index) {
+        final stepNum = index + 1;
+        final isActive = stepNum == _currentStep;
+        final isPassed = stepNum < _currentStep;
+
+        return Expanded(
+          child: Container(
+            margin: EdgeInsets.only(right: index < 2 ? 6.0 : 0.0),
+            height: 4,
+            decoration: BoxDecoration(
+              color: isPassed
+                  ? const Color(0xFF0F751B)
+                  : isActive
+                      ? const Color(0xFFECC700)
+                      : Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  // =========================================================================
+  // STEP 1 UI: Enter Username & Email Address
+  // =========================================================================
+  Widget _buildStep1() {
+    return KeyedSubtree(
+      key: const ValueKey('step_1_account_info'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row: "Sign up" & Help Icon
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Sign up',
+                style: GoogleFonts.merriweather(
+                  fontSize: 30,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F4D20),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const HelpScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(
+                  Icons.help_outline,
+                  color: Colors.black87,
+                  size: 26,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 4),
+          Text(
+            'Enter your username and email to get started.',
+            style: GoogleFonts.montserrat(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          // Username Field
+          Text(
+            'Username',
+            style: GoogleFonts.montserrat(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _usernameController,
+            decoration: InputDecoration(
+              hintText: 'LEADER_JUSTINE',
+              hintStyle: GoogleFonts.montserrat(
+                color: Colors.grey.shade400,
+                fontSize: 13.5,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade400),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(
+                  color: Color(0xFF0F4D20),
+                  width: 1.5,
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Email Address Field
+          Text(
+            'Email Address',
+            style: GoogleFonts.montserrat(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(
+              hintText: 'user@isu.edu.ph or gmail.com',
+              hintStyle: GoogleFonts.montserrat(
+                color: Colors.grey.shade400,
+                fontSize: 13.5,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade400),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(
+                  color: Color(0xFF0F4D20),
+                  width: 1.5,
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Already have account Link
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Text(
+                'Already have account? Log in',
+                style: GoogleFonts.montserrat(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1E60D0),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Continue Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _handleStep1Continue,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F751B),
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: Text(
+                'Continue & Send Code',
+                style: GoogleFonts.montserrat(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================================================================
+  // STEP 2 UI: Enter 6-Digit Email Verification Code
+  // =========================================================================
+  Widget _buildStep2() {
+    return KeyedSubtree(
+      key: const ValueKey('step_2_code_verification'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Verify Email',
+                style: GoogleFonts.merriweather(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F4D20),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const HelpScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(
+                  Icons.help_outline,
+                  color: Colors.black87,
+                  size: 26,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 6),
+          RichText(
+            text: TextSpan(
+              style: GoogleFonts.montserrat(
+                fontSize: 12,
+                color: Colors.black87,
+                height: 1.35,
+              ),
+              children: [
+                const TextSpan(text: "We've sent a 6-digit code to "),
+                TextSpan(
+                  text: _emailController.text.trim(),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF0F751B),
+                  ),
+                ),
+                const TextSpan(text: '. Enter it below to verify your email.'),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 22),
+
+          // 6 OTP Digit Boxes
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(6, (index) {
+              return SizedBox(
+                width: 40,
+                height: 48,
+                child: TextField(
+                  controller: _otpControllers[index],
+                  focusNode: _otpFocusNodes[index],
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  maxLength: 1,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: InputDecoration(
+                    counterText: '',
+                    filled: true,
+                    fillColor: const Color(0xFFF3F3F3),
+                    contentPadding: EdgeInsets.zero,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF0F751B),
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                  onChanged: (value) {
+                    if (value.isNotEmpty && index < 5) {
+                      _otpFocusNodes[index + 1].requestFocus();
+                    } else if (value.isEmpty && index > 0) {
+                      _otpFocusNodes[index - 1].requestFocus();
+                    }
+                  },
+                ),
+              );
+            }),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Resend Code & Edit Email Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _currentStep = 1;
+                  });
+                },
+                child: Text(
+                  'Edit Email',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  _showSnackBar(
+                    'A new verification code has been sent to ${_emailController.text.trim()}.',
+                    const Color(0xFF0F751B),
+                  );
+                },
+                child: Text(
+                  'Resend code',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF1E60D0),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 22),
+
+          // Verify and Proceed Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _handleStep2Verify,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F751B),
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: Text(
+                'Verify & Continue',
+                style: GoogleFonts.montserrat(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================================================================
+  // STEP 3 UI: Create New Password & Terms Agreement
+  // =========================================================================
+  Widget _buildStep3() {
+    return KeyedSubtree(
+      key: const ValueKey('step_3_set_password'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Set Password',
+                style: GoogleFonts.merriweather(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F4D20),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const HelpScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(
+                  Icons.help_outline,
+                  color: Colors.black87,
+                  size: 26,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 4),
+          Text(
+            'Create a strong password for ${_usernameController.text.trim()}.',
+            style: GoogleFonts.montserrat(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Password Field
+          Text(
+            'Password',
+            style: GoogleFonts.montserrat(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _passwordController,
+            obscureText: !_isPasswordVisible,
+            decoration: InputDecoration(
+              hintText: 'Enter password',
+              hintStyle: GoogleFonts.montserrat(
+                color: Colors.grey.shade400,
+                fontSize: 13.5,
+              ),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                  color: Colors.grey,
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _isPasswordVisible = !_isPasswordVisible;
+                  });
+                },
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade400),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(
+                  color: Color(0xFF0F4D20),
+                  width: 1.5,
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Confirm Password Field
+          Text(
+            'Confirm Password',
+            style: GoogleFonts.montserrat(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _confirmPasswordController,
+            obscureText: !_isConfirmPasswordVisible,
+            decoration: InputDecoration(
+              hintText: 'Re-enter password',
+              hintStyle: GoogleFonts.montserrat(
+                color: Colors.grey.shade400,
+                fontSize: 13.5,
+              ),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _isConfirmPasswordVisible
+                      ? Icons.visibility
+                      : Icons.visibility_off,
+                  color: Colors.grey,
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+                  });
+                },
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade400),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(
+                  color: Color(0xFF0F4D20),
+                  width: 1.5,
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // Password Requirements Checklist
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Password Requirements',
+                style: GoogleFonts.montserrat(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 4),
+              _buildRequirementItem('At least 8 characters', _hasMinLength),
+              _buildRequirementItem(
+                  'Mixed case letters (upper & lower)', _hasMixedCase),
+              _buildRequirementItem('At least one number', _hasNumber),
+              _buildRequirementItem(
+                  'At least one special character', _hasSpecialChar),
+              _buildRequirementItem(
+                  'Does not contain common patterns', _hasNoCommonPatterns),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Terms & Conditions Checkbox Row
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Checkbox(
+                  value: _isAgreedToTerms,
+                  activeColor: const Color(0xFF0F751B),
+                  onChanged: _handleCheckboxTap,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: RichText(
+                  text: TextSpan(
+                    style: GoogleFonts.montserrat(
+                      fontSize: 11,
+                      color: Colors.black87,
+                    ),
+                    children: [
+                      const TextSpan(text: 'I agree to the '),
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: GestureDetector(
+                          onTap: () => _showTermsDialog(),
+                          child: Text(
+                            'Terms and Conditions',
+                            style: GoogleFonts.montserrat(
+                              fontSize: 11,
+                              color: const Color(0xFF1E60D0),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const TextSpan(text: ' and '),
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: GestureDetector(
+                          onTap: () => _showPrivacyDialog(),
+                          child: Text(
+                            'Privacy Policy',
+                            style: GoogleFonts.montserrat(
+                              fontSize: 11,
+                              color: const Color(0xFF1E60D0),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 18),
+
+          // Green "Complete Registration" Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _handleStep3Complete,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F751B),
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: Text(
+                'Complete Registration',
+                style: GoogleFonts.montserrat(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
             ),
           ),
@@ -574,7 +1290,15 @@ class _RegisterScreenState extends State<RegisterScreen>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         GestureDetector(
-                          onTap: () => Navigator.pop(context),
+                          onTap: () {
+                            if (_currentStep > 1) {
+                              setState(() {
+                                _currentStep--;
+                              });
+                            } else {
+                              Navigator.pop(context);
+                            }
+                          },
                           child: Row(
                             children: [
                               const Icon(
@@ -606,9 +1330,9 @@ class _RegisterScreenState extends State<RegisterScreen>
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) =>
                                     const Icon(
-                                      Icons.school,
-                                      color: Colors.white,
-                                    ),
+                                  Icons.school,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),
@@ -618,9 +1342,9 @@ class _RegisterScreenState extends State<RegisterScreen>
                   ),
                 ),
 
-                const SizedBox(height: 28),
+                const SizedBox(height: 24),
 
-                // 2. White "Sign up" Card
+                // 2. White Registration Card with In-Card Dynamic Step Switcher
                 AnimatedBuilder(
                   animation: _controller,
                   builder: (context, child) {
@@ -644,390 +1368,33 @@ class _RegisterScreenState extends State<RegisterScreen>
                               ),
                             ],
                           ),
-                          child: child,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildStepIndicator(),
+                              const SizedBox(height: 18),
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 320),
+                                switchInCurve: Curves.easeOutCubic,
+                                switchOutCurve: Curves.easeInCubic,
+                                transitionBuilder: (child, animation) {
+                                  return FadeTransition(
+                                    opacity: animation,
+                                    child: child,
+                                  );
+                                },
+                                child: _currentStep == 1
+                                    ? _buildStep1()
+                                    : _currentStep == 2
+                                        ? _buildStep2()
+                                        : _buildStep3(),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
                   },
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Header Row: "Sign up" & Help Icon
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Sign up',
-                            style: GoogleFonts.merriweather(
-                              fontSize: 32,
-                              fontWeight: FontWeight.w900,
-                              color: const Color(0xFF0F4D20),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const HelpScreen(),
-                                ),
-                              );
-                            },
-                            icon: const Icon(
-                              Icons.help_outline,
-                              color: Colors.black87,
-                              size: 26,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 18),
-
-                      // Username
-                      Text(
-                        'Username',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      TextField(
-                        controller: _usernameController,
-                        decoration: InputDecoration(
-                          hintText: '',
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: Color(0xFF0F4D20),
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      // Password
-                      Text(
-                        'Password',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      TextField(
-                        controller: _passwordController,
-                        obscureText: !_isPasswordVisible,
-                        decoration: InputDecoration(
-                          hintText: 'LEADER_JUSTINE',
-                          hintStyle: GoogleFonts.montserrat(
-                            color: Colors.grey.shade400,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 13.5,
-                          ),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _isPasswordVisible
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _isPasswordVisible = !_isPasswordVisible;
-                              });
-                            },
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: Color(0xFF0F4D20),
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      // Confirm Password
-                      Text(
-                        'Confirm Password',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      TextField(
-                        controller: _confirmPasswordController,
-                        obscureText: !_isConfirmPasswordVisible,
-                        decoration: InputDecoration(
-                          hintText: 'LEADER_JUSTINE',
-                          hintStyle: GoogleFonts.montserrat(
-                            color: Colors.grey.shade400,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 13.5,
-                          ),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _isConfirmPasswordVisible
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _isConfirmPasswordVisible =
-                                    !_isConfirmPasswordVisible;
-                              });
-                            },
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: Color(0xFF0F4D20),
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      // Password Requirements & reCAPTCHA Box
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Password Requirements',
-                                  style: GoogleFonts.montserrat(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                _buildRequirementItem(
-                                  'At least 8 characters',
-                                  _hasMinLength,
-                                ),
-                                _buildRequirementItem(
-                                  'Mixed case letters',
-                                  _hasMixedCase,
-                                ),
-                                _buildRequirementItem(
-                                  'At least one number',
-                                  _hasNumber,
-                                ),
-                                _buildRequirementItem(
-                                  'At least one special character',
-                                  _hasSpecialChar,
-                                ),
-                                _buildRequirementItem(
-                                  'Does not contain common patterns',
-                                  _hasNoCommonPatterns,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 80,
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 8,
-                              horizontal: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF9F9F9),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: Colors.grey.shade300),
-                            ),
-                            child: Column(
-                              children: [
-                                const Icon(
-                                  Icons.autorenew,
-                                  color: Color(0xFF1B62D4),
-                                  size: 24,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  'reCAPTCHA',
-                                  style: GoogleFonts.montserrat(
-                                    fontSize: 7.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                                Text(
-                                  'Privacy - Terms',
-                                  style: GoogleFonts.montserrat(
-                                    fontSize: 6.5,
-                                    color: Colors.black38,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // "Already have account" Link
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Text(
-                            'Already have account',
-                            style: GoogleFonts.montserrat(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF1E60D0),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // Terms & Conditions Checkbox Row
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: Checkbox(
-                              value: _isAgreedToTerms,
-                              activeColor: const Color(0xFF0F751B),
-                              onChanged: _handleCheckboxTap,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: RichText(
-                              text: TextSpan(
-                                style: GoogleFonts.montserrat(
-                                  fontSize: 11,
-                                  color: Colors.black87,
-                                ),
-                                children: [
-                                  const TextSpan(text: 'I agree to the '),
-                                  WidgetSpan(
-                                    alignment: PlaceholderAlignment.middle,
-                                    child: GestureDetector(
-                                      onTap: () => _showTermsDialog(),
-                                      child: Text(
-                                        'Terms and Conditions',
-                                        style: GoogleFonts.montserrat(
-                                          fontSize: 11,
-                                          color: const Color(0xFF1E60D0),
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const TextSpan(text: ' and '),
-                                  WidgetSpan(
-                                    alignment: PlaceholderAlignment.middle,
-                                    child: GestureDetector(
-                                      onTap: () => _showPrivacyDialog(),
-                                      child: Text(
-                                        'Privacy Policy',
-                                        style: GoogleFonts.montserrat(
-                                          fontSize: 11,
-                                          color: const Color(0xFF1E60D0),
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 18),
-
-                      // Green "Sign in" / Register Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed: _handleSignUp,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF0F751B),
-                            elevation: 2,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                          ),
-                          child: Text(
-                            'Sign in',
-                            style: GoogleFonts.montserrat(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
 
                 const SizedBox(height: 28),

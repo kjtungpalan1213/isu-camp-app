@@ -7,7 +7,6 @@ plugins {
 android {
     namespace = "com.isu.isu_camp_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -17,7 +16,7 @@ android {
     defaultConfig {
         applicationId = "com.isu.isu_camp_app"
         // Google Maps SDK requires minimum SDK 21
-        minSdk = 21
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'forgot_password_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
@@ -13,127 +13,35 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  // Header Animation
-  late final Animation<double> _headerFade;
-  late final Animation<Offset> _headerSlide;
-
-  // Login Card Morph & Scale Animations
-  late final Animation<double> _cardScale;
-  late final Animation<double> _cardFade;
-  late final Animation<double> _cardRadius;
-
-  // Footer Animation
-  late final Animation<double> _footerFade;
-
+class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
 
   @override
-  void initState() {
-    super.initState();
-
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-
-    // 1. Top Header: Gentle fade and downward drift
-    _headerFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.45, curve: Curves.easeInOutCubic),
-      ),
-    );
-    _headerSlide =
-        Tween<Offset>(
-          begin: const Offset(0.0, -0.20),
-          end: Offset.zero,
-        ).animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
-          ),
-        );
-
-    // 2. Main Card: Smooth scale expansion & shape morph
-    _cardScale = Tween<double>(begin: 0.85, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.20, 0.85, curve: Curves.easeOutQuart),
-      ),
-    );
-
-    _cardRadius = Tween<double>(begin: 36.0, end: 18.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.20, 0.85, curve: Curves.easeOutCubic),
-      ),
-    );
-
-    _cardFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.20, 0.65, curve: Curves.easeIn),
-      ),
-    );
-
-    // 3. Footer: Subtle fade-in
-    _footerFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.60, 1.0, curve: Curves.easeIn),
-      ),
-    );
-
-    _controller.forward();
-  }
-
-  @override
   void dispose() {
-    _controller.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
-  // --- Handle Login Submission ---
   void _handleLogin() {
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
     if (username.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Please fill in both Username and Password.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      _showSnackBar(
+          'Please fill in both Username and Password.', Colors.redAccent);
       return;
     }
 
     if (!_isCaptchaChecked) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Please complete the verification checkbox.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.orangeAccent.shade700,
-        ),
-      );
+      _showSnackBar('Please complete the verification checkbox.',
+          Colors.orangeAccent.shade700);
       return;
     }
 
-    // Navigate to Apple-style WelcomeGreetingScreen with username
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -143,6 +51,405 @@ class _LoginScreenState extends State<LoginScreen>
       ),
     );
   }
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(message, style: GoogleFonts.montserrat()),
+          backgroundColor: color),
+    );
+  }
+
+  // =========================================================================
+  // POP-UP FLOW 1: Forgot Password Sheet
+  // =========================================================================
+  void _showForgotPasswordSheet(BuildContext context) {
+    final TextEditingController emailController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                Text('Reset Password',
+                    style: GoogleFonts.merriweather(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF0F4D20))),
+                const SizedBox(height: 8),
+                Text(
+                    'Enter your email address below, and we will send you a code to reset your password.',
+                    style: GoogleFonts.montserrat(
+                        fontSize: 12.5, color: Colors.grey.shade700)),
+                const SizedBox(height: 20),
+                Text('Email Address',
+                    style: GoogleFonts.montserrat(
+                        fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    hintText: 'user@gmail.com',
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final email = emailController.text.trim();
+                      if (email.isEmpty) {
+                        _showSnackBar(
+                            'Please enter your email.', Colors.redAccent);
+                        return;
+                      }
+                      Navigator.pop(context);
+                      _showVerifyCodeSheet(context, email);
+                    },
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F751B)),
+                    child: Text('Request Reset Code',
+                        style: GoogleFonts.montserrat(
+                            color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // =========================================================================
+  // POP-UP FLOW 2: Verify 6-Digit Code Sheet
+  // =========================================================================
+  void _showVerifyCodeSheet(BuildContext context, String email) {
+    final List<TextEditingController> otpControllers =
+        List.generate(6, (index) => TextEditingController());
+    final List<FocusNode> focusNodes = List.generate(6, (index) => FocusNode());
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                Text('Verify Code',
+                    style: GoogleFonts.merriweather(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF0F4D20))),
+                const SizedBox(height: 8),
+                Text(
+                    "We've sent a 6-digit verification code to $email. Please enter it below.",
+                    style: GoogleFonts.montserrat(
+                        fontSize: 12.5, color: Colors.grey.shade700)),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: List.generate(6, (index) {
+                    return SizedBox(
+                      width: 42,
+                      height: 50,
+                      child: TextField(
+                        controller: otpControllers[index],
+                        focusNode: focusNodes[index],
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        maxLength: 1,
+                        obscureText: true,
+                        obscuringCharacter: '●',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly
+                        ],
+                        decoration: InputDecoration(
+                          counterText: '',
+                          filled: true,
+                          fillColor: const Color(0xFFDCDCDC),
+                          contentPadding: EdgeInsets.zero,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none),
+                          focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(
+                                  color: Color(0xFF0F751B), width: 2)),
+                        ),
+                        onChanged: (value) {
+                          if (value.isNotEmpty && index < 5) {
+                            focusNodes[index + 1].requestFocus();
+                          } else if (value.isEmpty && index > 0) {
+                            focusNodes[index - 1].requestFocus();
+                          }
+                        },
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final code = otpControllers.map((c) => c.text).join();
+                      if (code.length < 6) {
+                        _showSnackBar(
+                            'Please enter all 6 digits.', Colors.redAccent);
+                        return;
+                      }
+                      Navigator.pop(context);
+                      _showSetNewPasswordSheet(context);
+                    },
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F751B)),
+                    child: Text('Verify and Continue',
+                        style: GoogleFonts.montserrat(
+                            color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // =========================================================================
+  // POP-UP FLOW 3: Set New Password Sheet (with Real-Time Validation)
+  // =========================================================================
+  void _showSetNewPasswordSheet(BuildContext context) {
+    final TextEditingController newPassController = TextEditingController();
+    final TextEditingController confirmPassController = TextEditingController();
+    bool isNewVisible = false;
+    bool isConfirmVisible = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final text = newPassController.text;
+            final bool hasMinLength = text.length >= 8;
+            final bool hasMixedCase = text.contains(RegExp(r'[a-z]')) &&
+                text.contains(RegExp(r'[A-Z]'));
+            final bool hasNumber = text.contains(RegExp(r'[0-9]'));
+            final bool hasSpecialChar =
+                text.contains(RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-\+=~/\\\[\]]'));
+
+            Widget buildRequirement(String label, bool met) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2.0),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: met ? const Color(0xFF0F751B) : Colors.grey),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(label,
+                        style: GoogleFonts.montserrat(
+                            fontSize: 11,
+                            color: met ? Colors.black87 : Colors.black54,
+                            fontWeight:
+                                met ? FontWeight.w600 : FontWeight.w400)),
+                  ],
+                ),
+              );
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 20),
+                          decoration: BoxDecoration(
+                              color: Colors.grey.shade300,
+                              borderRadius: BorderRadius.circular(2)),
+                        ),
+                      ),
+                      Text('Set New Password',
+                          style: GoogleFonts.merriweather(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF0F4D20))),
+                      const SizedBox(height: 16),
+                      Text('New Password',
+                          style: GoogleFonts.montserrat(
+                              fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: newPassController,
+                        obscureText: !isNewVisible,
+                        onChanged: (val) => setSheetState(() {}),
+                        decoration: InputDecoration(
+                          hintText: 'Enter new password',
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                                isNewVisible
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                                size: 20),
+                            onPressed: () => setSheetState(
+                                () => isNewVisible = !isNewVisible),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      buildRequirement('At least 8 characters', hasMinLength),
+                      buildRequirement(
+                          'Mixed case letters (upper & lower)', hasMixedCase),
+                      buildRequirement('At least one number', hasNumber),
+                      buildRequirement(
+                          'At least one special character', hasSpecialChar),
+                      const SizedBox(height: 16),
+                      Text('Confirm Password',
+                          style: GoogleFonts.montserrat(
+                              fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: confirmPassController,
+                        obscureText: !isConfirmVisible,
+                        decoration: InputDecoration(
+                          hintText: 'Re-enter new password',
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                                isConfirmVisible
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                                size: 20),
+                            onPressed: () => setSheetState(
+                                () => isConfirmVisible = !isConfirmVisible),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            if (newPassController.text !=
+                                confirmPassController.text) {
+                              _showSnackBar('Passwords do not match.',
+                                  Colors.orangeAccent);
+                              return;
+                            }
+                            if (!hasMinLength ||
+                                !hasMixedCase ||
+                                !hasNumber ||
+                                !hasSpecialChar) {
+                              _showSnackBar(
+                                  'Please meet all password requirements.',
+                                  Colors.redAccent);
+                              return;
+                            }
+                            Navigator.pop(context);
+                            _showSnackBar(
+                                'Password updated successfully! Please log in.',
+                                const Color(0xFF0F751B));
+                          },
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0F751B)),
+                          child: Text('Update Password',
+                              style: GoogleFonts.montserrat(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -154,109 +461,69 @@ class _LoginScreenState extends State<LoginScreen>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF072B18), // Deep ISU forest green
-              Color(0xFF02170C), // Dark evergreen
-            ],
+            colors: [Color(0xFF072B18), Color(0xFF02170C)],
           ),
         ),
         child: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 24.0,
-              vertical: 16.0,
-            ),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 1. Header: Slide and Fade Transition with Back Navigation
-                SlideTransition(
-                  position: _headerSlide,
-                  child: FadeTransition(
-                    opacity: _headerFade,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
                       children: [
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.location_on,
-                                color: Colors.white,
-                                size: 30,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'ISU- CAMP',
-                                style: GoogleFonts.montserrat(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.8,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: SizedBox(
-                            width: 46,
-                            height: 46,
-                            child: ClipOval(
-                              child: Image.asset(
-                                'assets/images/logo_isucamp_app.png',
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                      Icons.school,
-                                      color: Colors.white,
-                                    ),
-                              ),
-                            ),
+                        const Icon(Icons.location_on,
+                            color: Colors.white, size: 30),
+                        const SizedBox(width: 6),
+                        Text(
+                          'ISU- CAMP',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                            color: Colors.white,
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ),
-
-                const SizedBox(height: 36),
-
-                // 2. White Login Card (Animated Morph & Scale)
-                AnimatedBuilder(
-                  animation: _controller,
-                  builder: (context, child) {
-                    return FadeTransition(
-                      opacity: _cardFade,
-                      child: Transform.scale(
-                        scale: _cardScale.value,
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(22.0),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(
-                              _cardRadius.value,
-                            ),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black38,
-                                blurRadius: 16,
-                                offset: Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: child,
+                    SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/images/logo_isucamp_app.png',
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(Icons.school, color: Colors.white),
                         ),
                       ),
-                    );
-                  },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 36),
+
+                // Login Card
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22.0),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Colors.black38,
+                          blurRadius: 16,
+                          offset: Offset(0, 8)),
+                    ],
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Card Header: "Log in" and Help (?) Icon Navigation
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -269,99 +536,58 @@ class _LoginScreenState extends State<LoginScreen>
                             ),
                           ),
                           IconButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const HelpScreen(),
-                                ),
-                              );
-                            },
-                            icon: const Icon(
-                              Icons.help_outline,
-                              color: Colors.black87,
-                              size: 26,
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) => const HelpScreen()),
                             ),
+                            icon: const Icon(Icons.help_outline,
+                                color: Colors.black87, size: 26),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 20),
 
-                      // Username Label & TextField
-                      Text(
-                        'Username',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
+                      // Username field
+                      Text('Username',
+                          style: GoogleFonts.montserrat(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87)),
                       const SizedBox(height: 6),
                       TextField(
                         controller: _usernameController,
                         decoration: InputDecoration(
                           hintText: 'LEADER_JUSTINE',
                           hintStyle: GoogleFonts.montserrat(
-                            color: Colors.grey.shade400,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
+                              color: Colors.grey.shade400, fontSize: 14),
                           contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
+                              horizontal: 14, vertical: 12),
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: Color(0xFF0F4D20),
-                              width: 1.5,
-                            ),
-                          ),
+                              borderRadius: BorderRadius.circular(8)),
                         ),
                       ),
-
                       const SizedBox(height: 16),
 
-                      // Password Label & "Forgot Password?" Row
+                      // Password field & Forgot Link triggering the sheet
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Password',
-                            style: GoogleFonts.montserrat(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black87,
-                            ),
-                          ),
+                          Text('Password',
+                              style: GoogleFonts.montserrat(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black87)),
                           GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const ForgotPasswordScreen(),
-                                ),
-                              );
-                            },
+                            onTap: () => _showForgotPasswordSheet(context),
                             child: Text(
                               'Forgot Password?',
                               style: GoogleFonts.montserrat(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFF1E60D0),
-                              ),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF1E60D0)),
                             ),
                           ),
                         ],
@@ -373,54 +599,28 @@ class _LoginScreenState extends State<LoginScreen>
                         decoration: InputDecoration(
                           hintText: 'LEADER_JUSTINE',
                           hintStyle: GoogleFonts.montserrat(
-                            color: Colors.grey.shade400,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
+                              color: Colors.grey.shade400, fontSize: 14),
                           suffixIcon: IconButton(
                             icon: Icon(
-                              _isPasswordVisible
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _isPasswordVisible = !_isPasswordVisible;
-                              });
-                            },
+                                _isPasswordVisible
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                                size: 20),
+                            onPressed: () => setState(
+                                () => _isPasswordVisible = !_isPasswordVisible),
                           ),
                           contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
+                              horizontal: 14, vertical: 12),
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: Color(0xFF0F4D20),
-                              width: 1.5,
-                            ),
-                          ),
+                              borderRadius: BorderRadius.circular(8)),
                         ),
                       ),
-
                       const SizedBox(height: 16),
 
-                      // reCAPTCHA Box Mockup
+                      // reCAPTCHA Box
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
+                            horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
                           color: const Color(0xFFF9F9F9),
                           borderRadius: BorderRadius.circular(6),
@@ -431,77 +631,49 @@ class _LoginScreenState extends State<LoginScreen>
                             Checkbox(
                               value: _isCaptchaChecked,
                               activeColor: const Color(0xFF1B62D4),
-                              onChanged: (value) {
-                                setState(() {
-                                  _isCaptchaChecked = value ?? false;
-                                });
-                              },
+                              onChanged: (value) => setState(
+                                  () => _isCaptchaChecked = value ?? false),
                             ),
-                            Text(
-                              "I'm not a robot",
-                              style: GoogleFonts.montserrat(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black87,
-                              ),
-                            ),
+                            Text("I'm not a robot",
+                                style: GoogleFonts.montserrat(
+                                    fontSize: 13, fontWeight: FontWeight.w500)),
                             const Spacer(),
                             Column(
                               children: [
-                                const Icon(
-                                  Icons.autorenew,
-                                  color: Color(0xFF1B62D4),
-                                  size: 22,
-                                ),
-                                Text(
-                                  'reCAPTCHA',
-                                  style: GoogleFonts.montserrat(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                                Text(
-                                  'Privacy - Terms',
-                                  style: GoogleFonts.montserrat(
-                                    fontSize: 7,
-                                    color: Colors.black38,
-                                  ),
-                                ),
+                                const Icon(Icons.autorenew,
+                                    color: Color(0xFF1B62D4), size: 22),
+                                Text('reCAPTCHA',
+                                    style: GoogleFonts.montserrat(
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.w600)),
                               ],
                             ),
                           ],
                         ),
                       ),
-
                       const SizedBox(height: 10),
 
-                      // "Create new account" Link
+                      // Create Account Link
                       Align(
                         alignment: Alignment.centerRight,
                         child: GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const RegisterScreen(),
-                              ),
-                            );
-                          },
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) => const RegisterScreen()),
+                          ),
                           child: Text(
                             'Create new account',
                             style: GoogleFonts.montserrat(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF1E60D0),
-                            ),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF1E60D0)),
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 18),
 
-                      // Green "Log in" Button
+                      // Login Button
                       SizedBox(
                         width: double.infinity,
                         height: 48,
@@ -509,51 +681,37 @@ class _LoginScreenState extends State<LoginScreen>
                           onPressed: _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF0F751B),
-                            elevation: 2,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
+                                borderRadius: BorderRadius.circular(6)),
                           ),
                           child: Text(
                             'Log in',
                             style: GoogleFonts.montserrat(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white),
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 36),
-
-                // 3. Footer: Shield + Campus Name
-                FadeTransition(
-                  opacity: _footerFade,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.shield_outlined,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Isabela State University- Echague Campus',
-                        style: GoogleFonts.montserrat(
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.shield_outlined,
+                        color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Isabela State University- Echague Campus',
+                      style: GoogleFonts.montserrat(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
+                          color: Colors.white),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
               ],
             ),
           ),
