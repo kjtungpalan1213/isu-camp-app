@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../domain/auth_repository.dart';
-import '../domain/auth_result.dart';
-import '../domain/auth_session.dart';
 import 'forgot_password_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  final AuthRepository authRepository;
-
-  const LoginScreen({super.key, required this.authRepository});
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -38,7 +33,6 @@ class _LoginScreenState extends State<LoginScreen>
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
-  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -109,8 +103,7 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   // --- Handle Login Submission ---
-  Future<void> _handleLogin() async {
-    if (_isSubmitting) return;
+  void _handleLogin() {
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
@@ -140,52 +133,13 @@ class _LoginScreenState extends State<LoginScreen>
       return;
     }
 
-    _isSubmitting = true;
-    AuthResult<AuthSession> result;
-    try {
-      result = await widget.authRepository.login(
-        username: username,
-        password: password,
-      );
-    } catch (error) {
-      _isSubmitting = false;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Something went wrong. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-    _isSubmitting = false;
-
-    if (!mounted) return;
-
-    if (!result.isSuccess) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result.failure == AuthFailure.invalidCredentials
-                ? 'Invalid username or password.'
-                : 'Login failed. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
     // Navigate to Apple-style WelcomeGreetingScreen with username
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            WelcomeGreetingScreen(userName: result.value?.displayName ?? ''),
+        builder: (context) => WelcomeGreetingScreen(
+          userName: username.isNotEmpty ? username : 'Leader Justine',
+        ),
       ),
     );
   }
@@ -397,7 +351,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) =>
-                                      ForgotPasswordScreen(authRepository: widget.authRepository),
+                                      const ForgotPasswordScreen(),
                                 ),
                               );
                             },
@@ -530,8 +484,7 @@ class _LoginScreenState extends State<LoginScreen>
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) =>
-                                    RegisterScreen(authRepository: widget.authRepository),
+                                builder: (context) => const RegisterScreen(),
                               ),
                             );
                           },

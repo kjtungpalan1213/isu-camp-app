@@ -2,20 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../domain/auth_repository.dart';
-import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'set_new_password_screen.dart';
 
 class VerifyCodeScreen extends StatefulWidget {
   final String email;
-  final AuthRepository authRepository;
 
-  const VerifyCodeScreen({
-    super.key,
-    required this.email,
-    required this.authRepository,
-  });
+  const VerifyCodeScreen({super.key, this.email = 'user@gmail.com'});
 
   @override
   State<VerifyCodeScreen> createState() => _VerifyCodeScreenState();
@@ -43,8 +36,6 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
     (index) => TextEditingController(),
   );
   final List<FocusNode> _focusNodes = List.generate(6, (index) => FocusNode());
-  bool _isResending = false;
-  bool _isVerifying = false;
 
   @override
   void initState() {
@@ -62,15 +53,16 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
         curve: const Interval(0.0, 0.45, curve: Curves.easeInOutCubic),
       ),
     );
-    _headerSlide = Tween<Offset>(
-      begin: const Offset(0.0, -0.20),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
-      ),
-    );
+    _headerSlide =
+        Tween<Offset>(
+          begin: const Offset(0.0, -0.20),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
+          ),
+        );
 
     // 2. Card Morph & Scale Transition
     _cardScale = Tween<double>(begin: 0.85, end: 1.0).animate(
@@ -118,8 +110,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
   }
 
   // --- OTP Verification Action ---
-  Future<void> _handleVerify() async {
-    if (_isVerifying) return;
+  void _handleVerify() {
     final code = _otpControllers.map((c) => c.text).join();
 
     if (code.length < 6) {
@@ -135,86 +126,17 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
       return;
     }
 
-    _isVerifying = true;
-    AuthResult<void> result;
-    try {
-      result = await widget.authRepository.verifyResetCode(
-        email: widget.email,
-        code: code,
-      );
-    } catch (error) {
-      _isVerifying = false;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Something went wrong. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-    _isVerifying = false;
-
-    if (!mounted) return;
-
-    if (!result.isSuccess) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result.failure == AuthFailure.invalidCode
-                ? 'That verification code is not valid.'
-                : 'Verification failed. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
     // Navigate to SetNewPasswordScreen
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => SetNewPasswordScreen(
-          email: widget.email,
-          authRepository: widget.authRepository,
-        ),
+        builder: (context) => SetNewPasswordScreen(email: widget.email),
       ),
     );
   }
 
   // --- Resend Code Action ---
-  Future<void> _handleResendCode() async {
-    if (_isResending) return;
-    _isResending = true;
-
-    AuthResult<void> result;
-    try {
-      result = await widget.authRepository.requestPasswordReset(
-        email: widget.email,
-      );
-    } catch (error) {
-      _isResending = false;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not resend the code. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-    _isResending = false;
-
-    if (!mounted) return;
-
+  void _handleResendCode() {
     for (final c in _otpControllers) {
       c.clear();
     }
@@ -223,13 +145,10 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          result.isSuccess
-              ? 'A new 6-digit code has been sent to your email.'
-              : 'Could not resend the code. Please try again.',
+          'A new 6-digit code has been sent to your email.',
           style: GoogleFonts.montserrat(),
         ),
-        backgroundColor:
-            result.isSuccess ? const Color(0xFF0F751B) : Colors.redAccent,
+        backgroundColor: const Color(0xFF0F751B),
       ),
     );
   }
@@ -300,9 +219,9 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) =>
                                     const Icon(
-                                  Icons.school,
-                                  color: Colors.white,
-                                ),
+                                      Icons.school,
+                                      color: Colors.white,
+                                    ),
                               ),
                             ),
                           ),

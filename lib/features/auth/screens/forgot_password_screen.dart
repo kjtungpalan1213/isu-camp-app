@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../domain/auth_repository.dart';
-import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'verify_code_screen.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
-  final AuthRepository authRepository;
-
-  const ForgotPasswordScreen({super.key, required this.authRepository});
+  const ForgotPasswordScreen({super.key});
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -18,7 +14,6 @@ class ForgotPasswordScreen extends StatefulWidget {
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  bool _isRequesting = false;
 
   // Header Animation
   late final Animation<double> _headerFade;
@@ -50,15 +45,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
         curve: const Interval(0.0, 0.45, curve: Curves.easeInOutCubic),
       ),
     );
-    _headerSlide = Tween<Offset>(
-      begin: const Offset(0.0, -0.20),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
-      ),
-    );
+    _headerSlide =
+        Tween<Offset>(
+          begin: const Offset(0.0, -0.20),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
+          ),
+        );
 
     // 2. Card: Smooth scale & shape morph
     _cardScale = Tween<double>(begin: 0.85, end: 1.0).animate(
@@ -101,8 +97,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
   }
 
   // --- Request Reset Code Action ---
-  Future<void> _handleRequestResetCode() async {
-    if (_isRequesting) return;
+  void _handleRequestResetCode() {
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
@@ -131,50 +126,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
       return;
     }
 
-    _isRequesting = true;
-    AuthResult<void> result;
-    try {
-      result = await widget.authRepository.requestPasswordReset(email: email);
-    } catch (error) {
-      _isRequesting = false;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Something went wrong. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-    _isRequesting = false;
-
-    if (!mounted) return;
-
-    if (!result.isSuccess) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result.failure == AuthFailure.unknownAccount
-                ? 'No account found for that email address.'
-                : 'Could not send a reset code. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
     // Pass the entered email and open VerifyCodeScreen
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => VerifyCodeScreen(
-            email: email, authRepository: widget.authRepository),
-      ),
+      MaterialPageRoute(builder: (context) => VerifyCodeScreen(email: email)),
     );
   }
 
@@ -244,9 +199,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) =>
                                     const Icon(
-                                  Icons.school,
-                                  color: Colors.white,
-                                ),
+                                      Icons.school,
+                                      color: Colors.white,
+                                    ),
                               ),
                             ),
                           ),
