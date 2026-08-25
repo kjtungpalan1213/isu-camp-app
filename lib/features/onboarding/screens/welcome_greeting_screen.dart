@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:isu_camp_app/features/dashboard/screens/dashboard_screen.dart';
 
 class WelcomeGreetingScreen extends StatefulWidget {
   final String userName;
@@ -93,10 +94,17 @@ class _WelcomeGreetingScreenState extends State<WelcomeGreetingScreen>
   }
 
   void _handleProceed() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Phase 1 Complete! Dashboard module coming in Phase 2.'),
-        backgroundColor: Color(0xFF0F5A28),
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const DashboardScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: CurvedAnimation(parent: animation, curve: Curves.easeInOut),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 500),
       ),
     );
   }

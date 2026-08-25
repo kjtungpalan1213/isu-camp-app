@@ -59,11 +59,11 @@ class _GetStartedScreenState extends State<GetStartedScreen>
     // 4. Smooth bottom card upward drift
     _bottomSlide =
         Tween<Offset>(begin: const Offset(0.0, 0.12), end: Offset.zero).animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.35, 1.0, curve: Curves.easeOutCubic),
-          ),
-        );
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.35, 1.0, curve: Curves.easeOutCubic),
+      ),
+    );
 
     // 5. Bottom card content fade-in
     _bottomFade = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -161,7 +161,7 @@ class _GetStartedScreenState extends State<GetStartedScreen>
                           textAlign: TextAlign.center,
                           text: TextSpan(
                             style: GoogleFonts.antonSc(
-                              fontSize: 70,
+                              fontSize: 50,
                               fontWeight: FontWeight.w900,
                               letterSpacing: 0.80,
                               height: 1.30,
@@ -174,7 +174,7 @@ class _GetStartedScreenState extends State<GetStartedScreen>
                                 ),
                               ),
                               TextSpan(
-                                text: 'CAMP',
+                                text: 'COMPASS',
                                 style: TextStyle(
                                   color: Color.fromARGB(255, 19, 64, 34),
                                 ),
