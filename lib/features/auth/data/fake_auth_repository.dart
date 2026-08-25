@@ -27,6 +27,11 @@ class FakeAuthRepository implements AuthRepository {
     if (_accounts.containsKey(username)) {
       return const AuthResult.failure(AuthFailure.usernameTaken);
     }
+    final emailRegistered =
+        _accounts.values.any((account) => account.email == email);
+    if (emailRegistered) {
+      return const AuthResult.failure(AuthFailure.emailTaken);
+    }
     final session = AuthSession(displayName: username);
     _accounts[username] = _Account(
       password: password,
@@ -63,8 +68,7 @@ class FakeAuthRepository implements AuthRepository {
     required String email,
     required String code,
   }) async {
-    final isSixDigits =
-        code.length == 6 && RegExp(r'^[0-9]+$').hasMatch(code);
+    final isSixDigits = code.length == 6 && RegExp(r'^[0-9]+$').hasMatch(code);
     if (!isSixDigits) {
       return const AuthResult.failure(AuthFailure.invalidCode);
     }

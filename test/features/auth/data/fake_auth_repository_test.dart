@@ -40,6 +40,38 @@ void main() {
     expect(second.failure, AuthFailure.usernameTaken);
   });
 
+  test('registration with an email already in use is rejected', () async {
+    await repository.register(
+      username: 'justine',
+      password: 'campus123',
+      email: 'shared@example.com',
+    );
+    final second = await repository.register(
+      username: 'other',
+      password: 'campus123',
+      email: 'shared@example.com',
+    );
+    expect(second.isSuccess, isFalse);
+    expect(second.failure, AuthFailure.emailTaken);
+
+    final resetTarget =
+        await repository.requestPasswordReset(email: 'shared@example.com');
+    expect(resetTarget.isSuccess, isTrue);
+    final verify = await repository.verifyResetCode(
+        email: 'shared@example.com', code: '123456');
+    expect(verify.isSuccess, isTrue);
+    final reset = await repository.resetPassword(
+        email: 'shared@example.com', newPassword: 'freshPass1');
+    expect(reset.isSuccess, isTrue);
+
+    final justineLogin =
+        await repository.login(username: 'justine', password: 'freshPass1');
+    expect(justineLogin.isSuccess, isTrue);
+    final otherLogin =
+        await repository.login(username: 'other', password: 'campus123');
+    expect(otherLogin.isSuccess, isFalse);
+  });
+
   test('login with unknown username is rejected', () async {
     final session =
         await repository.login(username: 'stranger', password: 'campus123');
@@ -54,8 +86,7 @@ void main() {
       password: 'campus123',
       email: 'justine@example.com',
     );
-    final wrong =
-        await repository.login(username: 'justine', password: 'nope');
+    final wrong = await repository.login(username: 'justine', password: 'nope');
     expect(wrong.isSuccess, isFalse);
     expect(wrong.failure, AuthFailure.invalidCredentials);
 
@@ -71,8 +102,8 @@ void main() {
       email: 'justine@example.com',
     );
 
-    final request = await repository.requestPasswordReset(
-        email: 'justine@example.com');
+    final request =
+        await repository.requestPasswordReset(email: 'justine@example.com');
     expect(request.isSuccess, isTrue);
 
     final verify = await repository.verifyResetCode(

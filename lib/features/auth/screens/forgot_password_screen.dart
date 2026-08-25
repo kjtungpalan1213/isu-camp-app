@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../domain/auth_repository.dart';
-import '../domain/auth_result.dart';import 'help_screen.dart';
+import '../domain/auth_result.dart';
+import 'help_screen.dart';
 import 'verify_code_screen.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
@@ -49,16 +50,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
         curve: const Interval(0.0, 0.45, curve: Curves.easeInOutCubic),
       ),
     );
-    _headerSlide =
-        Tween<Offset>(
-          begin: const Offset(0.0, -0.20),
-          end: Offset.zero,
-        ).animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
-          ),
-        );
+    _headerSlide = Tween<Offset>(
+      begin: const Offset(0.0, -0.20),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
+      ),
+    );
 
     // 2. Card: Smooth scale & shape morph
     _cardScale = Tween<double>(begin: 0.85, end: 1.0).animate(
@@ -134,8 +134,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     _isRequesting = true;
     AuthResult<void> result;
     try {
-      result =
-          await widget.authRepository.requestPasswordReset(email: email);
+      result = await widget.authRepository.requestPasswordReset(email: email);
     } catch (error) {
       _isRequesting = false;
       if (!mounted) return;
@@ -173,8 +172,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            VerifyCodeScreen(email: email, authRepository: widget.authRepository),
+        builder: (context) => VerifyCodeScreen(
+            email: email, authRepository: widget.authRepository),
       ),
     );
   }
@@ -245,9 +244,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) =>
                                     const Icon(
-                                      Icons.school,
-                                      color: Colors.white,
-                                    ),
+                                  Icons.school,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),

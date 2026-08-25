@@ -1,5 +1,6 @@
 enum AuthFailure {
   usernameTaken,
+  emailTaken,
   invalidCredentials,
   invalidCode,
   unknownAccount,
