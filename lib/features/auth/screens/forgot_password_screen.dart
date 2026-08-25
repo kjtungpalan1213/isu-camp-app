@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../domain/auth_repository.dart';
-import '../domain/auth_result.dart';
-import 'help_screen.dart';
+import '../domain/auth_result.dart';import 'help_screen.dart';
 import 'verify_code_screen.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
@@ -18,6 +17,7 @@ class ForgotPasswordScreen extends StatefulWidget {
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  bool _isRequesting = false;
 
   // Header Animation
   late final Animation<double> _headerFade;
@@ -102,6 +102,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
 
   // --- Request Reset Code Action ---
   Future<void> _handleRequestResetCode() async {
+    if (_isRequesting) return;
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
@@ -130,8 +131,26 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
       return;
     }
 
-    final result =
-        await widget.authRepository.requestPasswordReset(email: email);
+    _isRequesting = true;
+    AuthResult<void> result;
+    try {
+      result =
+          await widget.authRepository.requestPasswordReset(email: email);
+    } catch (error) {
+      _isRequesting = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Something went wrong. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    _isRequesting = false;
 
     if (!mounted) return;
 

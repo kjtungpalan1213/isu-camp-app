@@ -43,6 +43,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
     (index) => TextEditingController(),
   );
   final List<FocusNode> _focusNodes = List.generate(6, (index) => FocusNode());
+  bool _isResending = false;
 
   @override
   void initState() {
@@ -133,10 +134,25 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
       return;
     }
 
-    final result = await widget.authRepository.verifyResetCode(
-      email: widget.email,
-      code: code,
-    );
+    final AuthResult<void> result;
+    try {
+      result = await widget.authRepository.verifyResetCode(
+        email: widget.email,
+        code: code,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Something went wrong. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
 
     if (!mounted) return;
 
@@ -169,7 +185,29 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
 
   // --- Resend Code Action ---
   Future<void> _handleResendCode() async {
-    await widget.authRepository.requestPasswordReset(email: widget.email);
+    if (_isResending) return;
+    _isResending = true;
+
+    AuthResult<void> result;
+    try {
+      result = await widget.authRepository.requestPasswordReset(
+        email: widget.email,
+      );
+    } catch (error) {
+      _isResending = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not resend the code. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    _isResending = false;
 
     if (!mounted) return;
 
@@ -181,10 +219,14 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'A new 6-digit code has been sent to your email.',
+          result.isSuccess
+              ? 'A new 6-digit code has been sent to your email.'
+              : 'Could not resend the code. Please try again.',
           style: GoogleFonts.montserrat(),
         ),
-        backgroundColor: const Color(0xFF0F751B),
+        backgroundColor: result.isSuccess
+            ? const Color(0xFF0F751B)
+            : Colors.redAccent,
       ),
     );
   }

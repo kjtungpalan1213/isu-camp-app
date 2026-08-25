@@ -24,3 +24,15 @@ are exercisable end-to-end through the interface alone.
   survive an app restart until a real adapter with storage exists.
 - The `server/` directory is intentionally untouched by frontend work; its
   endpoints must be shaped to satisfy this interface, not the other way round.
+
+## Amendment (2026-08-25): email is now collected at registration
+
+Originally `register(username, password)` carried no email while all three
+Password Reset operations keyed on email — no registered account was reachable
+through any reset flow a user would actually exercise. Registration now requires
+an `email` parameter (the register screen has a matching field), and the fake
+stores and matches that real address instead of synthesizing one. The reset flow
+is also stateful: `verifyResetCode`/`resetPassword` succeed only after
+`requestPasswordReset` for the same account. A real adapter must implement the
+same contract from stored emails; nothing about `<username>@example.com`
+synthesis should be copied anywhere.

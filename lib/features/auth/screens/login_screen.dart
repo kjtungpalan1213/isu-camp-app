@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../domain/auth_repository.dart';
 import '../domain/auth_result.dart';
+import '../domain/auth_session.dart';
 import 'forgot_password_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
@@ -37,6 +38,7 @@ class _LoginScreenState extends State<LoginScreen>
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -108,6 +110,7 @@ class _LoginScreenState extends State<LoginScreen>
 
   // --- Handle Login Submission ---
   Future<void> _handleLogin() async {
+    if (_isSubmitting) return;
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
@@ -137,10 +140,28 @@ class _LoginScreenState extends State<LoginScreen>
       return;
     }
 
-    final result = await widget.authRepository.login(
-      username: username,
-      password: password,
-    );
+    _isSubmitting = true;
+    AuthResult<AuthSession> result;
+    try {
+      result = await widget.authRepository.login(
+        username: username,
+        password: password,
+      );
+    } catch (error) {
+      _isSubmitting = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Something went wrong. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    _isSubmitting = false;
 
     if (!mounted) return;
 

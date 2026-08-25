@@ -5,26 +5,34 @@ import 'package:isu_camp_app/features/auth/domain/auth_session.dart';
 class _Account {
   final String password;
   final String displayName;
+  final String email;
 
-  const _Account({required this.password, required this.displayName});
+  const _Account({
+    required this.password,
+    required this.displayName,
+    required this.email,
+  });
 }
 
 class FakeAuthRepository implements AuthRepository {
   final Map<String, _Account> _accounts = {};
-
-  String _emailFor(String username) => '$username@example.com';
+  final Set<String> _pendingResets = {};
 
   @override
   Future<AuthResult<AuthSession>> register({
     required String username,
     required String password,
+    required String email,
   }) async {
     if (_accounts.containsKey(username)) {
       return const AuthResult.failure(AuthFailure.usernameTaken);
     }
     final session = AuthSession(displayName: username);
-    _accounts[username] =
-        _Account(password: password, displayName: username);
+    _accounts[username] = _Account(
+      password: password,
+      displayName: username,
+      email: email,
+    );
     return AuthResult.success(session);
   }
 
@@ -42,12 +50,11 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<AuthResult<void>> requestPasswordReset({required String email}) async {
-    final known = _accounts.values.any(
-      (account) => _emailFor(account.displayName) == email,
-    );
+    final known = _accounts.values.any((account) => account.email == email);
     if (!known) {
       return const AuthResult.failure(AuthFailure.unknownAccount);
     }
+    _pendingResets.add(email);
     return const AuthResult.success(null);
   }
 
@@ -61,6 +68,9 @@ class FakeAuthRepository implements AuthRepository {
     if (!isSixDigits) {
       return const AuthResult.failure(AuthFailure.invalidCode);
     }
+    if (!_pendingResets.contains(email)) {
+      return const AuthResult.failure(AuthFailure.unknownAccount);
+    }
     return const AuthResult.success(null);
   }
 
@@ -69,16 +79,23 @@ class FakeAuthRepository implements AuthRepository {
     required String email,
     required String newPassword,
   }) async {
+    if (!_pendingResets.contains(email)) {
+      return const AuthResult.failure(AuthFailure.unknownAccount);
+    }
     final username = _accounts.keys.firstWhere(
-      (key) => _emailFor(key) == email,
+      (key) => _accounts[key]!.email == email,
       orElse: () => '',
     );
     final account = _accounts[username];
     if (username.isEmpty || account == null) {
       return const AuthResult.failure(AuthFailure.unknownAccount);
     }
-    _accounts[username] =
-        _Account(password: newPassword, displayName: account.displayName);
+    _pendingResets.remove(email);
+    _accounts[username] = _Account(
+      password: newPassword,
+      displayName: account.displayName,
+      email: account.email,
+    );
     return const AuthResult.success(null);
   }
 }

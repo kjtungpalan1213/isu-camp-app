@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../domain/auth_repository.dart';
+import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'login_screen.dart';
 
@@ -41,6 +42,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
 
   bool _isNewPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
+  bool _isSubmitting = false;
 
   // Real-time requirement flags
   bool _hasMinLength = false;
@@ -137,6 +139,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
   }
 
   Future<void> _handleUpdatePassword() async {
+    if (_isSubmitting) return;
     final newPass = _newPasswordController.text;
     final confirmPass = _confirmPasswordController.text;
 
@@ -179,10 +182,28 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
       return;
     }
 
-    final result = await widget.authRepository.resetPassword(
-      email: widget.email,
-      newPassword: newPass,
-    );
+    _isSubmitting = true;
+    AuthResult<void> result;
+    try {
+      result = await widget.authRepository.resetPassword(
+        email: widget.email,
+        newPassword: newPass,
+      );
+    } catch (error) {
+      _isSubmitting = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Something went wrong. Please try again.',
+            style: GoogleFonts.montserrat(),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    _isSubmitting = false;
 
     if (!mounted) return;
 
