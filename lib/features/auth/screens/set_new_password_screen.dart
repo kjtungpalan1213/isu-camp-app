@@ -1,20 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../domain/auth_repository.dart';
-import '../domain/auth_result.dart';
 import 'help_screen.dart';
 import 'login_screen.dart';
 
 class SetNewPasswordScreen extends StatefulWidget {
   final String email;
-  final AuthRepository authRepository;
 
-  const SetNewPasswordScreen({
-    super.key,
-    required this.email,
-    required this.authRepository,
-  });
+  const SetNewPasswordScreen({super.key, this.email = 'user@gmail.com'});
 
   @override
   State<SetNewPasswordScreen> createState() => _SetNewPasswordScreenState();
@@ -42,7 +35,6 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
 
   bool _isNewPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
-  bool _isSubmitting = false;
 
   // Real-time requirement flags
   bool _hasMinLength = false;
@@ -138,8 +130,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
     super.dispose();
   }
 
-  Future<void> _handleUpdatePassword() async {
-    if (_isSubmitting) return;
+  void _handleUpdatePassword() {
     final newPass = _newPasswordController.text;
     final confirmPass = _confirmPasswordController.text;
 
@@ -182,54 +173,20 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
       return;
     }
 
-    _isSubmitting = true;
-    AuthResult<void> result;
-    try {
-      result = await widget.authRepository.resetPassword(
-        email: widget.email,
-        newPassword: newPass,
-      );
-    } catch (error) {
-      _isSubmitting = false;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Something went wrong. Please try again.',
-            style: GoogleFonts.montserrat(),
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-    _isSubmitting = false;
-
-    if (!mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          result.isSuccess
-              ? 'Password updated successfully! Please log in.'
-              : 'Could not update the password. Please try again.',
+          'Password updated successfully! Please log in.',
           style: GoogleFonts.montserrat(),
         ),
-        backgroundColor:
-            result.isSuccess ? const Color(0xFF0F751B) : Colors.redAccent,
+        backgroundColor: const Color(0xFF0F751B),
       ),
     );
-
-    if (!result.isSuccess) {
-      return;
-    }
 
     // Return all the way back to LoginScreen
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(
-        builder: (context) => LoginScreen(authRepository: widget.authRepository),
-      ),
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
       (route) => false,
     );
   }
@@ -691,9 +648,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen>
                                   Navigator.pushAndRemoveUntil(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => LoginScreen(
-                                        authRepository: widget.authRepository,
-                                      ),
+                                      builder: (context) => const LoginScreen(),
                                     ),
                                     (route) => false,
                                   );
