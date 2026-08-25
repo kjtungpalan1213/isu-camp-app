@@ -60,6 +60,10 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  bool _isValidEmail(String email) {
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
+  }
+
   // =========================================================================
   // POP-UP FLOW 1: Forgot Password Sheet
   // =========================================================================
@@ -101,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         color: const Color(0xFF0F4D20))),
                 const SizedBox(height: 8),
                 Text(
-                    'Enter your email address below, and we will send you a code to reset your password.',
+                    'Enter your email address below. In this prototype, the reset code is simulated.',
                     style: GoogleFonts.montserrat(
                         fontSize: 12.5, color: Colors.grey.shade700)),
                 const SizedBox(height: 20),
@@ -127,9 +131,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: ElevatedButton(
                     onPressed: () {
                       final email = emailController.text.trim();
-                      if (email.isEmpty) {
-                        _showSnackBar(
-                            'Please enter your email.', Colors.redAccent);
+                      if (!_isValidEmail(email)) {
+                        _showSnackBar('Please enter a valid email address.',
+                            Colors.redAccent);
                         return;
                       }
                       Navigator.pop(context);
@@ -147,7 +151,11 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       },
-    );
+    ).whenComplete(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        emailController.dispose();
+      });
+    });
   }
 
   // =========================================================================
@@ -193,7 +201,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         color: const Color(0xFF0F4D20))),
                 const SizedBox(height: 8),
                 Text(
-                    "We've sent a 6-digit verification code to $email. Please enter it below.",
+                    'Enter the simulated 6-digit verification code for $email.',
                     style: GoogleFonts.montserrat(
                         fontSize: 12.5, color: Colors.grey.shade700)),
                 const SizedBox(height: 20),
@@ -267,7 +275,14 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       },
-    );
+    ).whenComplete(() {
+      for (final controller in otpControllers) {
+        controller.dispose();
+      }
+      for (final focusNode in focusNodes) {
+        focusNode.dispose();
+      }
+    });
   }
 
   // =========================================================================
@@ -428,7 +443,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             }
                             Navigator.pop(context);
                             _showSnackBar(
-                                'Password updated successfully! Please log in.',
+                                'Password accepted in this prototype. Please log in when backend auth is connected.',
                                 const Color(0xFF0F751B));
                           },
                           style: ElevatedButton.styleFrom(
@@ -447,9 +462,11 @@ class _LoginScreenState extends State<LoginScreen> {
           },
         );
       },
-    );
+    ).whenComplete(() {
+      newPassController.dispose();
+      confirmPassController.dispose();
+    });
   }
-
 
   @override
   Widget build(BuildContext context) {
