@@ -151,7 +151,11 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       },
-    ).whenComplete(emailController.dispose);
+    ).whenComplete(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        emailController.dispose();
+      });
+    });
   }
 
   // =========================================================================
