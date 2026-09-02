@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'help_screen.dart';
 import 'login_screen.dart';
-import '../services/user_session.dart';
+import '../services/auth_service.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -50,6 +50,7 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   bool _isAgreedToTerms = false;
+  bool _isLoading = false;
 
   // Real-time password requirement flags
   bool _hasMinLength = false;
@@ -211,7 +212,7 @@ class _RegisterScreenState extends State<RegisterScreen>
   }
 
   // --- Step 3 Navigation: Complete Sign Up ---
-  void _handleStep3Complete() {
+  Future<void> _handleStep3Complete() async {
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
@@ -246,20 +247,35 @@ class _RegisterScreenState extends State<RegisterScreen>
       return;
     }
 
-    UserSession.setRegisteredUser(
+    setState(() {
+      _isLoading = true;
+    });
+
+    final result = await AuthService.register(
       username: _usernameController.text.trim(),
       email: _emailController.text.trim(),
+      password: password,
     );
 
-    _showSnackBar(
-      'Account created successfully! Please log in.',
-      const Color(0xFF0F751B),
-    );
+    if (!mounted) return;
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-    );
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (result.success) {
+      _showSnackBar(
+        'Account created successfully in database! Please log in.',
+        const Color(0xFF0F751B),
+      );
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+      );
+    } else {
+      _showSnackBar(result.message, Colors.redAccent);
+    }
   }
 
   // --- Terms and Conditions Dialog ---
@@ -1239,7 +1255,7 @@ class _RegisterScreenState extends State<RegisterScreen>
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _handleStep3Complete,
+              onPressed: _isLoading ? null : _handleStep3Complete,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0F751B),
                 elevation: 2,
@@ -1247,14 +1263,23 @@ class _RegisterScreenState extends State<RegisterScreen>
                   borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              child: Text(
-                'Complete Registration',
-                style: GoogleFonts.montserrat(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2.5,
+                      ),
+                    )
+                  : Text(
+                      'Complete Registration',
+                      style: GoogleFonts.montserrat(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
         ],

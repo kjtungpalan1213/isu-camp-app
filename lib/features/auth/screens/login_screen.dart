@@ -5,7 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'get_started_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
-import '../services/user_session.dart';
+import '../services/auth_service.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -20,6 +20,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -28,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _handleLogin() {
+  Future<void> _handleLogin() async {
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
@@ -44,14 +45,95 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    UserSession.setLoggedInUser(username: username);
+    setState(() {
+      _isLoading = true;
+    });
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => WelcomeGreetingScreen(
-          userName: username.isNotEmpty ? username : 'UserA1B2c3',
+    final result = await AuthService.login(
+      username: username,
+      password: password,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (result.success) {
+      _showSnackBar('Login successful!', const Color(0xFF0F751B));
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => WelcomeGreetingScreen(
+            userName: username,
+          ),
         ),
+      );
+    } else {
+      if (result.isUserNotFound) {
+        _showUserNotFoundDialog(username);
+      } else {
+        _showSnackBar(result.message, Colors.redAccent);
+      }
+    }
+  }
+
+  void _showUserNotFoundDialog(String username) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.person_off_outlined, color: Color(0xFFD32F2F)),
+            const SizedBox(width: 8),
+            Text(
+              'Account Not Found',
+              style: GoogleFonts.merriweather(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: const Color(0xFF0F4D20),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Unable to log in: The account "$username" does not exist in the database.\n\nYou need to create an account first to log in.',
+          style: GoogleFonts.montserrat(fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.montserrat(color: Colors.grey.shade700),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const RegisterScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0F751B),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(
+              'Create Account',
+              style: GoogleFonts.montserrat(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -725,19 +807,28 @@ class _LoginScreenState extends State<LoginScreen> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _handleLogin,
+                          onPressed: _isLoading ? null : _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF0F751B),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(6)),
                           ),
-                          child: Text(
-                            'Log in',
-                            style: GoogleFonts.montserrat(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white),
-                          ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2.5,
+                                  ),
+                                )
+                              : Text(
+                                  'Log in',
+                                  style: GoogleFonts.montserrat(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white),
+                                ),
                         ),
                       ),
                     ],
