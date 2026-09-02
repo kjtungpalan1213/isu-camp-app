@@ -85,7 +85,7 @@ class _GetStartedScreenState extends State<GetStartedScreen>
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    const double logoDiameter = 300.0;
+    const double logoDiameter = 400.0;
 
     return Scaffold(
       body: Stack(
@@ -121,7 +121,7 @@ class _GetStartedScreenState extends State<GetStartedScreen>
                       height: logoDiameter,
                       child: ClipOval(
                         child: Image.asset(
-                          'assets/images/logo_isucamp_app.png',
+                          'assets/images/logo_kumpas_app.png',
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) {
                             return const Icon(
@@ -161,20 +161,20 @@ class _GetStartedScreenState extends State<GetStartedScreen>
                           textAlign: TextAlign.center,
                           text: TextSpan(
                             style: GoogleFonts.antonSc(
-                              fontSize: 50,
+                              fontSize: 65,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: 0.80,
-                              height: 1.30,
+                              letterSpacing: 1.0,
+                              height: 1.25,
                             ),
                             children: const [
                               TextSpan(
-                                text: 'ISU-',
+                                text: 'KUM',
                                 style: TextStyle(
                                   color: Color.fromARGB(255, 55, 56, 56),
                                 ),
                               ),
                               TextSpan(
-                                text: 'COMPASS',
+                                text: 'PAS',
                                 style: TextStyle(
                                   color: Color.fromARGB(255, 19, 64, 34),
                                 ),
@@ -187,10 +187,10 @@ class _GetStartedScreenState extends State<GetStartedScreen>
 
                         // Subtitle
                         Text(
-                          'Isabela State University\nCampus Assistance and Mapping Platform',
+                          'Kampus Unified Mapping & \nPathfinding Assistance System',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.montserrat(
-                            fontSize: 13,
+                            fontSize: 17,
                             fontWeight: FontWeight.w500,
                             color: Colors.black87,
                             height: 1.1,

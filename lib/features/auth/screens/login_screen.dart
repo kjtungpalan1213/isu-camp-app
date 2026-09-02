@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'get_started_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
+import '../services/user_session.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -42,11 +44,13 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    UserSession.setLoggedInUser(username: username);
+
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (context) => WelcomeGreetingScreen(
-          userName: username.isNotEmpty ? username : 'Leader Justine',
+          userName: username.isNotEmpty ? username : 'UserA1B2c3',
         ),
       ),
     );
@@ -472,38 +476,64 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Header
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.location_on,
-                            color: Colors.white, size: 30),
-                        const SizedBox(width: 6),
-                        Text(
-                          'ISU- CAMP',
-                          style: GoogleFonts.montserrat(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: Colors.white,
+                GestureDetector(
+                  onTap: () {
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    } else {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const GetStartedScreen(),
+                        ),
+                      );
+                    }
+                  },
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 34,
+                            height: 34,
+                            child: ClipOval(
+                              child: Image.asset(
+                                'assets/images/logo_kumpas_app.png',
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(Icons.navigation,
+                                        color: Colors.white),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'KUMPAS',
+                            style: GoogleFonts.montserrat(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: ClipOval(
+                          child: Image.asset(
+                            'assets/images/logo_isu_png.png',
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(Icons.school, color: Colors.white),
                           ),
                         ),
-                      ],
-                    ),
-                    SizedBox(
-                      width: 46,
-                      height: 46,
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/images/logo_isucamp_app.png',
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.school, color: Colors.white),
-                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 36),
 

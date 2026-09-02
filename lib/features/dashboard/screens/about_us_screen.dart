@@ -144,7 +144,7 @@ class AboutUsScreen extends StatelessWidget {
                               ],
                             ),
                             child: Image.asset(
-                              'assets/images/logo_isucamp_app.png',
+                              'assets/images/logo_kumpas_app.png',
                               fit: BoxFit.contain,
                               errorBuilder: (context, error, stackTrace) =>
                                   const Icon(
@@ -160,7 +160,7 @@ class AboutUsScreen extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'ISU- CAMP',
+                                  'KUMPAS',
                                   style: GoogleFonts.montserrat(
                                     fontSize: 26,
                                     fontWeight: FontWeight.w900,
@@ -170,7 +170,7 @@ class AboutUsScreen extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'ISU Campus Assistance and Mapping Platform',
+                                  'Kampus Unified Mapping & Pathfinding Assistance System',
                                   style: GoogleFonts.montserrat(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -225,7 +225,7 @@ class AboutUsScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 14),
                             Text(
-                              'The ISU-CAMP is a web-based interactive campus mapping and navigation system designed to help students, faculty, staff, and visitors easily find specific locations within the campus. It provides a centralized platform where users can search for buildings, offices, classrooms, laboratories, and other important destinations and receive route recommendations based on their preferences.',
+                              'KUMPAS is an interactive campus mapping and navigation system designed to help students, faculty, staff, and visitors easily find specific locations within the campus. It provides a centralized platform where users can search for buildings, offices, classrooms, laboratories, and other important destinations and receive route recommendations based on their preferences.',
                               textAlign: TextAlign.justify,
                               style: GoogleFonts.montserrat(
                                 fontSize: 13,
@@ -250,7 +250,7 @@ class AboutUsScreen extends StatelessWidget {
                           ),
                           children: const [
                             TextSpan(
-                              text: 'ISU-CAMP ',
+                              text: 'KUMPAS ',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,
@@ -268,7 +268,7 @@ class AboutUsScreen extends StatelessWidget {
 
                       // Narrative Paragraph 2
                       Text(
-                        'Our goal is to make campus navigation faster, easier, and more accessible by providing interactive maps, location searching, route recommendations, and offline navigation capabilities. Through ISU-CAMP, we aim to reduce confusion when finding unfamiliar locations and provide users with a more convenient way to navigate the campus.',
+                        'Our goal is to make campus navigation faster, easier, and more accessible by providing interactive maps, location searching, route recommendations, and offline navigation capabilities. Through KUMPAS, we aim to reduce confusion when finding unfamiliar locations and provide users with a more convenient way to navigate the campus.',
                         textAlign: TextAlign.justify,
                         style: GoogleFonts.montserrat(
                           fontSize: 13,

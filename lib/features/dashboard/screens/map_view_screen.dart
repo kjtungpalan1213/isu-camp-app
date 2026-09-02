@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../auth/screens/help_screen.dart';
-import '../../auth/screens/login_screen.dart';
 import '../data/campus_dataset.dart';
 import '../models/campus_models.dart';
 import '../widgets/navigation_sheets.dart';
-import 'about_us_screen.dart';
+import 'user_info_screen.dart';
 
 enum NavigationUiState {
   idle,
@@ -48,7 +46,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Connected to ISU-CAMP Admin Service. Ready for Map API synchronization.',
+                'Connected to KUMPAS Admin Service. Ready for Map API synchronization.',
                 style: GoogleFonts.montserrat(fontSize: 12.5),
               ),
             ),
@@ -57,23 +55,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
         backgroundColor: const Color(0xFF0F751B),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
 
-  void _selectBuildingAndShowDetails(CampusBuilding building) {
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _selectedBuilding = building;
-      _navigationState = NavigationUiState.buildingDetails;
-    });
-  }
-
-  // Filter Buildings based on Search & Category Chips
   List<CampusBuilding> _getFilteredBuildings() {
-    final query = _searchController.text.trim().toLowerCase();
     return isuCampusBuildings.where((b) {
+      final query = _searchController.text.toLowerCase().trim();
       final matchesQuery = query.isEmpty ||
           b.name.toLowerCase().contains(query) ||
           b.acronym.toLowerCase().contains(query) ||
@@ -81,335 +70,23 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
       if (!matchesQuery) return false;
 
-      if (_selectedCategoryFilter == 'Parkings') {
+      if (_selectedCategoryFilter == 'Colleges') {
+        return !b.isParking;
+      } else if (_selectedCategoryFilter == 'Parkings') {
         return b.isParking;
       } else if (_selectedCategoryFilter == 'Shaded') {
         return b.hasShadedPath;
-      } else if (_selectedCategoryFilter == 'Colleges') {
-        return b.category.toLowerCase().contains('college') ||
-            b.category.toLowerCase().contains('academic');
       }
 
       return true;
     }).toList();
   }
 
-  // --- USER MENU POPUP MODAL ---
-  void _showUserProfileModal(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        final screenHeight = MediaQuery.of(context).size.height;
-
-        return Container(
-          height: screenHeight * 0.90,
-          decoration: const BoxDecoration(
-            color: Color(0xFF0B351E),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              // 1. Top Header with Faded Campus Image, "Done" button, and Curved Bottom Arch
-              Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.topCenter,
-                children: [
-                  ClipPath(
-                    clipper: _HeaderCurveClipper(),
-                    child: Container(
-                      height: 200,
-                      width: double.infinity,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                      ),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.asset(
-                            'assets/images/Appdev_background1.png',
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                Container(color: Colors.grey.shade100),
-                          ),
-                          Container(
-                            color: Colors.white.withValues(alpha: 0.72),
-                          ),
-                          SafeArea(
-                            bottom: false,
-                            child: Align(
-                              alignment: Alignment.topRight,
-                              child: Padding(
-                                padding: const EdgeInsets.only(
-                                  top: 14.0,
-                                  right: 20.0,
-                                ),
-                                child: GestureDetector(
-                                  onTap: () => Navigator.pop(context),
-                                  child: Text(
-                                    'Done',
-                                    style: GoogleFonts.montserrat(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // Circular Avatar
-                  Positioned(
-                    bottom: -38,
-                    child: Container(
-                      width: 88,
-                      height: 88,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFFE2E8F0),
-                        border: Border.all(
-                          color: Colors.white,
-                          width: 3.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.15),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.person_outline,
-                          size: 48,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 46),
-
-              // 2. Username Text
-              Text(
-                'UserA1B2c3',
-                style: GoogleFonts.montserrat(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  letterSpacing: 0.4,
-                ),
-              ),
-
-              const SizedBox(height: 22),
-
-              // 3. Menu List Section
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Column(
-                    children: [
-                      // Card 1: Offline Map
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.08),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.cloud_download_outlined,
-                              color: Color(0xFF6B7280),
-                              size: 22,
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Text(
-                                'Offline Map',
-                                style: GoogleFonts.montserrat(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ),
-                            const Icon(
-                              Icons.chevron_right,
-                              color: Color(0xFF9CA3AF),
-                              size: 22,
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      // Card 2: Grouped Menu (History, About us, Help)
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.08),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            _buildMenuRow(
-                              icon: Icons.access_time_outlined,
-                              label: 'History',
-                              onTap: null,
-                            ),
-                            const Divider(
-                              height: 1,
-                              thickness: 1,
-                              color: Color(0xFFF0F0F0),
-                            ),
-                            _buildMenuRow(
-                              icon: Icons.people_outline,
-                              label: 'About us',
-                              onTap: () {
-                                Navigator.pop(context);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const AboutUsScreen(),
-                                  ),
-                                );
-                              },
-                            ),
-                            const Divider(
-                              height: 1,
-                              thickness: 1,
-                              color: Color(0xFFF0F0F0),
-                            ),
-                            _buildMenuRow(
-                              icon: Icons.help_outline,
-                              label: 'Help',
-                              onTap: () {
-                                Navigator.pop(context);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const HelpScreen(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      // 4. Log Out Button
-                      SizedBox(
-                        width: 170,
-                        height: 42,
-                        child: OutlinedButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            Navigator.pushAndRemoveUntil(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const LoginScreen(),
-                              ),
-                              (route) => false,
-                            );
-                          },
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(
-                              color: Colors.white,
-                              width: 1.5,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            padding: EdgeInsets.zero,
-                          ),
-                          child: Text(
-                            'Log Out',
-                            style: GoogleFonts.montserrat(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMenuRow({
-    required IconData icon,
-    required String label,
-    required VoidCallback? onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, color: const Color(0xFF6B7280), size: 22),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                style: GoogleFonts.montserrat(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right,
-              color: Color(0xFF9CA3AF),
-              size: 22,
-            ),
-          ],
-        ),
-      ),
-    );
+  void _selectBuildingAndShowDetails(CampusBuilding building) {
+    setState(() {
+      _selectedBuilding = building;
+      _navigationState = NavigationUiState.buildingDetails;
+    });
   }
 
   Widget _buildFilterChip(String label, IconData icon) {
@@ -703,14 +380,25 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     children: [
                       Row(
                         children: [
-                          const Icon(
-                            Icons.location_on,
-                            color: Colors.white,
-                            size: 26,
+                          SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: ClipOval(
+                              child: Image.asset(
+                                'assets/images/logo_kumpas_app.png',
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(
+                                  Icons.navigation,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 8),
                           Text(
-                            'ISU-CAMP',
+                            'KUMPAS',
                             style: GoogleFonts.montserrat(
                               fontSize: 18,
                               fontWeight: FontWeight.w800,
@@ -723,7 +411,22 @@ class _MapViewScreenState extends State<MapViewScreen> {
                       Row(
                         children: [
                           GestureDetector(
-                            onTap: () => _showUserProfileModal(context),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => UserInfoScreen(
+                                    onNavigateToBuilding: (destination) {
+                                      _selectBuildingAndShowDetails(destination);
+                                      setState(() {
+                                        _navigationState =
+                                            NavigationUiState.chooseRoute;
+                                      });
+                                    },
+                                  ),
+                                ),
+                              );
+                            },
                             child: Container(
                               padding: const EdgeInsets.all(6),
                               decoration: BoxDecoration(
@@ -747,7 +450,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                             height: 36,
                             child: ClipOval(
                               child: Image.asset(
-                                'assets/images/logo_isucamp_app.png',
+                                'assets/images/logo_isu_png.png',
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) =>
                                     const Icon(
@@ -933,23 +636,4 @@ class _MapViewScreenState extends State<MapViewScreen> {
       ),
     );
   }
-}
-
-class _HeaderCurveClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, size.height - 36);
-    path.quadraticBezierTo(
-      size.width / 2,
-      size.height + 26,
-      size.width,
-      size.height - 36,
-    );
-    path.lineTo(size.width, 0);
-    return path;
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }

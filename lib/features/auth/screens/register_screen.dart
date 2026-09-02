@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'help_screen.dart';
 import 'login_screen.dart';
+import '../services/user_session.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -245,6 +246,11 @@ class _RegisterScreenState extends State<RegisterScreen>
       return;
     }
 
+    UserSession.setRegisteredUser(
+      username: _usernameController.text.trim(),
+      email: _emailController.text.trim(),
+    );
+
     _showSnackBar(
       'Account created successfully! Please log in.',
       const Color(0xFF0F751B),
@@ -303,7 +309,7 @@ class _RegisterScreenState extends State<RegisterScreen>
                         children: const [
                           TextSpan(text: 'By using '),
                           TextSpan(
-                            text: 'ISU-CAMP',
+                            text: 'KUMPAS',
                             style: TextStyle(
                               color: Color(0xFF0F751B),
                               fontWeight: FontWeight.w700,
@@ -318,8 +324,8 @@ class _RegisterScreenState extends State<RegisterScreen>
                     ),
                     const SizedBox(height: 10),
                     _buildDialogBullet(
-                      'ISU-CAMP helps users locate campus buildings, offices, rooms, facilities, and walking routes.',
-                      boldGreenPrefix: 'ISU-CAMP ',
+                      'KUMPAS helps users locate campus buildings, offices, rooms, facilities, and walking routes.',
+                      boldGreenPrefix: 'KUMPAS ',
                     ),
                     _buildDialogBullet(
                       'Map and route information is provided for guidance and may change as campus conditions are updated.',
@@ -334,8 +340,8 @@ class _RegisterScreenState extends State<RegisterScreen>
                       'Users must not misuse the application or access it for unauthorized purposes.',
                     ),
                     _buildDialogBullet(
-                      'ISU-CAMP may be updated or modified to improve its features and information.',
-                      boldGreenPrefix: 'ISU-CAMP ',
+                      'KUMPAS may be updated or modified to improve its features and information.',
+                      boldGreenPrefix: 'KUMPAS ',
                     ),
                     const SizedBox(height: 10),
                     Text(
@@ -430,7 +436,7 @@ class _RegisterScreenState extends State<RegisterScreen>
                         ),
                         children: const [
                           TextSpan(
-                            text: 'ISU-CAMP',
+                            text: 'KUMPAS',
                             style: TextStyle(
                               color: Color(0xFF0F751B),
                               fontWeight: FontWeight.w700,
@@ -1301,14 +1307,25 @@ class _RegisterScreenState extends State<RegisterScreen>
                           },
                           child: Row(
                             children: [
-                              const Icon(
-                                Icons.location_on,
-                                color: Colors.white,
-                                size: 30,
+                              SizedBox(
+                                width: 34,
+                                height: 34,
+                                child: ClipOval(
+                                  child: Image.asset(
+                                    'assets/images/logo_kumpas_app.png',
+                                    fit: BoxFit.contain,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const Icon(
+                                      Icons.navigation,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
                               ),
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 8),
                               Text(
-                                'ISU- CAMP',
+                                'KUMPAS',
                                 style: GoogleFonts.montserrat(
                                   fontSize: 22,
                                   fontWeight: FontWeight.w800,
@@ -1319,20 +1336,17 @@ class _RegisterScreenState extends State<RegisterScreen>
                             ],
                           ),
                         ),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: SizedBox(
-                            width: 46,
-                            height: 46,
-                            child: ClipOval(
-                              child: Image.asset(
-                                'assets/images/logo_isucamp_app.png',
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                  Icons.school,
-                                  color: Colors.white,
-                                ),
+                        SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/images/logo_isu_png.png',
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Icon(
+                                Icons.school,
+                                color: Colors.white,
                               ),
                             ),
                           ),

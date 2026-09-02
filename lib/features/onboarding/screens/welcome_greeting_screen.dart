@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:isu_camp_app/features/dashboard/screens/dashboard_screen.dart';
 
@@ -170,14 +170,25 @@ class _WelcomeGreetingScreenState extends State<WelcomeGreetingScreen>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(
-                          Icons.location_on,
-                          color: Color(0xFFC5A059),
-                          size: 24,
+                        SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/images/logo_kumpas_app.png',
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Icon(
+                                Icons.navigation,
+                                color: Color(0xFFC5A059),
+                                size: 24,
+                              ),
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Text(
-                          'ISU- CAMP',
+                          'KUMPAS',
                           style: GoogleFonts.montserrat(
                             fontSize: 16,
                             fontWeight: FontWeight.w800,
