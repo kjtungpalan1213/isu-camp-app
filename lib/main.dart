@@ -12,7 +12,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ISU-CAMP',
+      title: 'KUMPAS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true),
       home: const GetStartedScreen(),

@@ -75,9 +75,9 @@ class HelpScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Section: How to Use ISU-CAMP
+                      // Section: How to Use KUMPAS
                       Text(
-                        'How to Use ISU-CAMP',
+                        'How to Use KUMPAS',
                         style: GoogleFonts.montserrat(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -157,7 +157,7 @@ class HelpScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'If you encounter incorrect location information, missing locations, or other issues while using ISU-CAMP, please contact the system administrator or report the issue through the provided support option.',
+                        'If you encounter incorrect location information, missing locations, or other issues while using KUMPAS, please contact the system administrator or report the issue through the provided support option.',
                         style: GoogleFonts.montserrat(
                           fontSize: 12,
                           color: Colors.white70,
