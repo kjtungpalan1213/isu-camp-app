@@ -119,7 +119,8 @@ class AuthService {
     if (_registeredUsers.containsKey(key)) {
       return AuthResult(
         success: false,
-        message: 'Username "$cleanUsername" is already taken. Please choose another.',
+        message:
+            'Username "$cleanUsername" is already taken. Please choose another.',
       );
     }
 
@@ -162,7 +163,8 @@ class AuthService {
         entry['password'] = newPassword;
         return AuthResult(
           success: true,
-          message: 'Password updated successfully. Please log in with your new password.',
+          message:
+              'Password updated successfully. Please log in with your new password.',
         );
       }
     }
