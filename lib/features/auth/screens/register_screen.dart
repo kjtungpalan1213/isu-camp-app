@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'help_screen.dart';
 import 'login_screen.dart';
+import '../services/user_session.dart';
 import '../services/auth_service.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -50,7 +51,6 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   bool _isAgreedToTerms = false;
-  bool _isLoading = false;
 
   // Real-time password requirement flags
   bool _hasMinLength = false;
@@ -159,26 +159,36 @@ class _RegisterScreenState extends State<RegisterScreen>
   }
 
   // --- Step 1 Navigation: Validate Email & Username ---
-  void _handleStep1Continue() {
-    final username = _usernameController.text.trim();
-    final email = _emailController.text.trim();
+Future<void> _handleStep1Continue() async {
+  final username = _usernameController.text.trim();
+  final email = _emailController.text.trim();
 
-    if (username.isEmpty || email.isEmpty) {
-      _showSnackBar(
-          'Please fill in both Username and Email.', Colors.redAccent);
-      return;
-    }
+  if (username.isEmpty || email.isEmpty) {
+    _showSnackBar(
+      'Please fill in both Username and Email.',
+      Colors.redAccent,
+    );
+    return;
+  }
 
-    final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
-    if (!emailRegex.hasMatch(email)) {
-      _showSnackBar(
-        'Please enter a valid email address.',
-        Colors.orangeAccent.shade700,
-      );
-      return;
-    }
+  final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
 
-    // Advance to Step 2: Code Verification inside the same card
+  if (!emailRegex.hasMatch(email)) {
+    _showSnackBar(
+      'Please enter a valid email address.',
+      Colors.orangeAccent.shade700,
+    );
+    return;
+  }
+
+  try {
+    await AuthService.requestSignupOtp(
+      username: username,
+      email: email,
+    );
+
+    if (!mounted) return;
+
     setState(() {
       _currentStep = 2;
     });
@@ -187,20 +197,39 @@ class _RegisterScreenState extends State<RegisterScreen>
       'Verification code sent to $email.',
       const Color(0xFF0F751B),
     );
+  } catch (error) {
+    if (!mounted) return;
+
+    String message = error.toString();
+    message = message.replaceFirst('Exception: ', '');
+
+    _showSnackBar(
+      message,
+      Colors.redAccent,
+    );
   }
+}
 
   // --- Step 2 Navigation: Validate 6-Digit Code ---
-  void _handleStep2Verify() {
-    final code = _otpControllers.map((c) => c.text).join();
-    if (code.length < 6) {
-      _showSnackBar(
-        'Please enter the full 6-digit verification code.',
-        Colors.redAccent,
-      );
-      return;
-    }
+Future<void> _handleStep2Verify() async {
+  final code = _otpControllers.map((c) => c.text).join();
 
-    // Advance to Step 3: Password Creation inside the same card
+  if (code.length != 6) {
+    _showSnackBar(
+      'Please enter the full 6-digit verification code.',
+      Colors.redAccent,
+    );
+    return;
+  }
+
+  try {
+    await AuthService.verifySignupOtp(
+      email: _emailController.text.trim(),
+      otp: int.parse(code),
+    );
+
+    if (!mounted) return;
+
     setState(() {
       _currentStep = 3;
     });
@@ -209,74 +238,97 @@ class _RegisterScreenState extends State<RegisterScreen>
       'Email verified! Now set a strong password.',
       const Color(0xFF0F751B),
     );
+  } catch (error) {
+    if (!mounted) return;
+
+    String message = error.toString();
+    message = message.replaceFirst('Exception: ', '');
+
+    _showSnackBar(
+      message,
+      Colors.redAccent,
+    );
   }
+}
 
   // --- Step 3 Navigation: Complete Sign Up ---
-  Future<void> _handleStep3Complete() async {
-    final password = _passwordController.text;
-    final confirmPassword = _confirmPasswordController.text;
+Future<void> _handleStep3Complete() async {
+  final password = _passwordController.text;
+  final confirmPassword = _confirmPasswordController.text;
 
-    if (password.isEmpty || confirmPassword.isEmpty) {
-      _showSnackBar(
-          'Please enter and confirm your password.', Colors.redAccent);
-      return;
-    }
+  if (password.isEmpty || confirmPassword.isEmpty) {
+    _showSnackBar(
+      'Please enter and confirm your password.',
+      Colors.redAccent,
+    );
+    return;
+  }
 
-    if (password != confirmPassword) {
-      _showSnackBar('Passwords do not match.', Colors.redAccent);
-      return;
-    }
+  if (password != confirmPassword) {
+    _showSnackBar(
+      'Passwords do not match.',
+      Colors.redAccent,
+    );
+    return;
+  }
 
-    if (!_hasMinLength ||
-        !_hasMixedCase ||
-        !_hasNumber ||
-        !_hasSpecialChar ||
-        !_hasNoCommonPatterns) {
-      _showSnackBar(
-        'Please meet all required password criteria.',
-        Colors.orangeAccent.shade700,
-      );
-      return;
-    }
+  if (!_hasMinLength ||
+      !_hasMixedCase ||
+      !_hasNumber ||
+      !_hasSpecialChar ||
+      !_hasNoCommonPatterns) {
+    _showSnackBar(
+      'Please meet all required password criteria.',
+      Colors.orangeAccent.shade700,
+    );
+    return;
+  }
 
-    if (!_isAgreedToTerms) {
-      _showSnackBar(
-        'Please agree to the Terms & Conditions and Privacy Policy.',
-        Colors.orangeAccent.shade700,
-      );
-      return;
-    }
+  if (!_isAgreedToTerms) {
+    _showSnackBar(
+      'Please agree to the Terms & Conditions and Privacy Policy.',
+      Colors.orangeAccent.shade700,
+    );
+    return;
+  }
 
-    setState(() {
-      _isLoading = true;
-    });
-
-    final result = await AuthService.register(
-      username: _usernameController.text.trim(),
+  try {
+    await AuthService.setSignupPassword(
       email: _emailController.text.trim(),
       password: password,
+      confirmPassword: confirmPassword,
     );
 
     if (!mounted) return;
 
-    setState(() {
-      _isLoading = false;
-    });
+    UserSession.setRegisteredUser(
+      username: _usernameController.text.trim(),
+      email: _emailController.text.trim(),
+    );
 
-    if (result.success) {
-      _showSnackBar(
-        'Account created successfully in database! Please log in.',
-        const Color(0xFF0F751B),
-      );
+    _showSnackBar(
+      'Account created successfully! Please log in.',
+      const Color(0xFF0F751B),
+    );
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
-    } else {
-      _showSnackBar(result.message, Colors.redAccent);
-    }
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const LoginScreen(),
+      ),
+    );
+  } catch (error) {
+    if (!mounted) return;
+
+    String message = error.toString();
+    message = message.replaceFirst('Exception: ', '');
+
+    _showSnackBar(
+      message,
+      Colors.redAccent,
+    );
   }
+}
 
   // --- Terms and Conditions Dialog ---
   Future<bool?> _showTermsDialog() {
@@ -1255,7 +1307,7 @@ class _RegisterScreenState extends State<RegisterScreen>
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _isLoading ? null : _handleStep3Complete,
+              onPressed: _handleStep3Complete,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0F751B),
                 elevation: 2,
@@ -1263,23 +1315,14 @@ class _RegisterScreenState extends State<RegisterScreen>
                   borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              child: _isLoading
-                  ? const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2.5,
-                      ),
-                    )
-                  : Text(
-                      'Complete Registration',
-                      style: GoogleFonts.montserrat(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
+              child: Text(
+                'Complete Registration',
+                style: GoogleFonts.montserrat(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
             ),
           ),
         ],
