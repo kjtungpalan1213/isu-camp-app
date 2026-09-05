@@ -3,9 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'help_screen.dart';
-import 'login_screen.dart';
 import '../services/user_session.dart';
 import '../services/auth_service.dart';
+import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -301,21 +301,31 @@ Future<void> _handleStep3Complete() async {
 
     if (!mounted) return;
 
+    final registeredUsername = _usernameController.text.trim();
+    final registeredEmail = _emailController.text.trim();
+
     UserSession.setRegisteredUser(
-      username: _usernameController.text.trim(),
-      email: _emailController.text.trim(),
+      username: registeredUsername,
+      email: registeredEmail,
+    );
+
+    UserSession.setLoggedInUser(
+      username: registeredUsername,
     );
 
     _showSnackBar(
-      'Account created successfully! Please log in.',
+      'Account created successfully! Welcome to ISU-CAMP.',
       const Color(0xFF0F751B),
     );
 
-    Navigator.pushReplacement(
+    Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
-        builder: (context) => const LoginScreen(),
+        builder: (context) => WelcomeGreetingScreen(
+          userName: registeredUsername,
+        ),
       ),
+      (route) => false,
     );
   } catch (error) {
     if (!mounted) return;

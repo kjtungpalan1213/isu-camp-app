@@ -103,16 +103,21 @@ class RouteMetricsHelper {
 class BuildingDetailsSheet extends StatelessWidget {
   final CampusBuilding building;
   final VoidCallback onDirectionsTap;
+  final VoidCallback? onClose;
 
   const BuildingDetailsSheet({
     super.key,
     required this.building,
     required this.onDirectionsTap,
+    this.onClose,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.70,
+      ),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -124,115 +129,275 @@ class BuildingDetailsSheet extends StatelessWidget {
           ),
         ],
       ),
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Drag Handle
-          Center(
-            child: Container(
-              width: 44,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-
-          // "RESULT" Tag
-          Text(
-            'RESULT',
-            style: GoogleFonts.montserrat(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: Colors.grey.shade600,
-              letterSpacing: 0.5,
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Building Image with rounded corners
-          ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Container(
-              height: 155,
-              width: double.infinity,
-              color: Colors.grey.shade200,
-              child: Image.asset(
-                building.imageUrl ?? 'assets/images/Appdev_background1.png',
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => Center(
-                  child: Icon(
-                    building.isParking ? Icons.local_parking : Icons.school,
-                    size: 54,
-                    color: const Color(0xFF0F751B),
-                  ),
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Drag Handle & Top Header Row
+            Center(
+              child: Container(
+                width: 44,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
-          ),
 
-          const SizedBox(height: 14),
-
-          // Title & Subtitle + Green "DIRECTIONS" Button Row
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      building.name,
-                      style: GoogleFonts.montserrat(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      building.category,
-                      style: GoogleFonts.montserrat(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton(
-                onPressed: onDirectionsTap,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0F5A28),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  elevation: 2,
-                ),
-                child: Text(
-                  'DIRECTIONS',
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'BUILDING DETAILS',
                   style: GoogleFonts.montserrat(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: 0.6,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade600,
+                    letterSpacing: 0.5,
                   ),
+                ),
+                if (onClose != null)
+                  GestureDetector(
+                    onTap: onClose,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        size: 18,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            // Building Image with rounded corners
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                height: 160,
+                width: double.infinity,
+                color: Colors.grey.shade200,
+                child: Image.asset(
+                  building.imageUrl ?? 'assets/images/Appdev_background1.png',
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Center(
+                    child: Icon(
+                      building.isParking ? Icons.local_parking : Icons.school,
+                      size: 54,
+                      color: const Color(0xFF0F751B),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            // Title & Subtitle + Green "DIRECTIONS" Button Row
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        building.name,
+                        style: GoogleFonts.montserrat(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0F4D20),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        building.category,
+                        style: GoogleFonts.montserrat(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: onDirectionsTap,
+                  icon: const Icon(Icons.directions, size: 16, color: Colors.white),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F5A28),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 11,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    elevation: 2,
+                  ),
+                  label: Text(
+                    'DIRECTIONS',
+                    style: GoogleFonts.montserrat(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            if (building.description.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                building.description,
+                style: GoogleFonts.montserrat(
+                  fontSize: 12,
+                  color: Colors.grey.shade700,
+                  height: 1.4,
                 ),
               ),
             ],
-          ),
-        ],
+
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+
+            // Rooms & Laboratories Section (Scrollable)
+            Row(
+              children: [
+                const Icon(
+                  Icons.meeting_room_outlined,
+                  size: 18,
+                  color: Color(0xFF0F5A28),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Rooms & Facilities (${building.rooms.length})',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF0F4D20),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            if (building.rooms.isNotEmpty)
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: building.rooms.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final room = building.rooms[index];
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7FAF8),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F751B).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            room.icon,
+                            color: const Color(0xFF0F751B),
+                            size: 18,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                room.title,
+                                style: GoogleFonts.montserrat(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                room.floor,
+                                style: GoogleFonts.montserrat(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECC700).withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            room.category.name.toUpperCase(),
+                            style: GoogleFonts.montserrat(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.brown.shade800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              )
+            else
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Text(
+                  'No interior rooms or offices in this facility.',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 11.5,
+                    color: Colors.grey.shade600,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
