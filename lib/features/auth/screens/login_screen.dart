@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../services/auth_service.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'get_started_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
-import '../services/auth_service.dart';
+import '../services/user_session.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -20,7 +21,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
-  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -29,114 +29,67 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _handleLogin() async {
-    final username = _usernameController.text.trim();
-    final password = _passwordController.text.trim();
+Future<void> _handleLogin() async {
+  final identifier = _usernameController.text.trim();
+  final password = _passwordController.text.trim();
 
-    if (username.isEmpty || password.isEmpty) {
-      _showSnackBar(
-          'Please fill in both Username and Password.', Colors.redAccent);
-      return;
-    }
+  if (identifier.isEmpty || password.isEmpty) {
+    _showSnackBar(
+      'Please fill in both Username and Password.',
+      Colors.redAccent,
+    );
+    return;
+  }
 
-    if (!_isCaptchaChecked) {
-      _showSnackBar('Please complete the verification checkbox.',
-          Colors.orangeAccent.shade700);
-      return;
-    }
+  if (!_isCaptchaChecked) {
+    _showSnackBar(
+      'Please complete the verification checkbox.',
+      Colors.orangeAccent.shade700,
+    );
+    return;
+  }
 
-    setState(() {
-      _isLoading = true;
-    });
-
-    final result = await AuthService.login(
-      username: username,
+  try {
+    // Check credentials through backend
+    final response = await AuthService.login(
+      identifier: identifier,
       password: password,
+    );
+
+    // Get actual user returned by database
+    final user = response['user'];
+    final String username = user['username'];
+
+    // Remember logged-in user
+    UserSession.setLoggedInUser(
+      username: username,
     );
 
     if (!mounted) return;
 
-    setState(() {
-      _isLoading = false;
-    });
-
-    if (result.success) {
-      _showSnackBar('Login successful!', const Color(0xFF0F751B));
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => WelcomeGreetingScreen(
-            userName: username,
-          ),
+    // Login successful → proceed
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => WelcomeGreetingScreen(
+          userName: username,
         ),
-      );
-    } else {
-      if (result.isUserNotFound) {
-        _showUserNotFoundDialog(username);
-      } else {
-        _showSnackBar(result.message, Colors.redAccent);
-      }
-    }
-  }
-
-  void _showUserNotFoundDialog(String username) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            const Icon(Icons.person_off_outlined, color: Color(0xFFD32F2F)),
-            const SizedBox(width: 8),
-            Text(
-              'Account Not Found',
-              style: GoogleFonts.merriweather(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-                color: const Color(0xFF0F4D20),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          'Unable to log in: The account "$username" does not exist in the database.\n\nYou need to create an account first to log in.',
-          style: GoogleFonts.montserrat(fontSize: 13, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.montserrat(color: Colors.grey.shade700),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const RegisterScreen()),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0F751B),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: Text(
-              'Create Account',
-              style: GoogleFonts.montserrat(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
       ),
     );
+  } catch (error) {
+    if (!mounted) return;
+
+    String message = error.toString();
+
+    // Remove "Exception: " from displayed message
+    message = message.replaceFirst('Exception: ', '');
+
+    _showSnackBar(
+      message,
+      Colors.redAccent,
+    );
   }
+}
 
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -146,24 +99,22 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  bool _isValidEmail(String email) {
-    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
-  }
-
   // =========================================================================
   // POP-UP FLOW 1: Forgot Password Sheet
   // =========================================================================
   void _showForgotPasswordSheet(BuildContext context) {
-    final TextEditingController emailController = TextEditingController();
+    final TextEditingController identifierController =
+        TextEditingController();
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
+      builder: (sheetContext) {
         return Padding(
-          padding:
-              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+          ),
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: const BoxDecoration(
@@ -180,34 +131,47 @@ class _LoginScreenState extends State<LoginScreen> {
                     height: 4,
                     margin: const EdgeInsets.only(bottom: 20),
                     decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2)),
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-                Text('Reset Password',
-                    style: GoogleFonts.merriweather(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: const Color(0xFF0F4D20))),
+                Text(
+                  'Reset Password',
+                  style: GoogleFonts.merriweather(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF0F4D20),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text(
-                    'Enter your email address below. In this prototype, the reset code is simulated.',
-                    style: GoogleFonts.montserrat(
-                        fontSize: 12.5, color: Colors.grey.shade700)),
+                  'Enter your username or email. We will send a verification code to your registered email.',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 12.5,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
                 const SizedBox(height: 20),
-                Text('Email Address',
-                    style: GoogleFonts.montserrat(
-                        fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(
+                  'Username or Email',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 TextField(
-                  controller: emailController,
-                  keyboardType: TextInputType.emailAddress,
+                  controller: identifierController,
                   decoration: InputDecoration(
-                    hintText: 'user@gmail.com',
+                    hintText: 'Username or Email',
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -215,21 +179,59 @@ class _LoginScreenState extends State<LoginScreen> {
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: () {
-                      final email = emailController.text.trim();
-                      if (!_isValidEmail(email)) {
-                        _showSnackBar('Please enter a valid email address.',
-                            Colors.redAccent);
+                    onPressed: () async {
+                      final identifier =
+                          identifierController.text.trim();
+
+                      if (identifier.isEmpty) {
+                        _showSnackBar(
+                          'Please enter your username or email.',
+                          Colors.redAccent,
+                        );
                         return;
                       }
-                      Navigator.pop(context);
-                      _showVerifyCodeSheet(context, email);
+
+                      try {
+                        await AuthService.requestForgotPasswordOtp(
+                          identifier: identifier,
+                        );
+
+                        if (!mounted) return;
+
+                        Navigator.pop(sheetContext);
+
+                        _showVerifyCodeSheet(
+                          context,
+                          identifier,
+                        );
+
+                        _showSnackBar(
+                          'Verification code sent to your registered email.',
+                          const Color(0xFF0F751B),
+                        );
+                      } catch (error) {
+                        if (!mounted) return;
+
+                        String message = error.toString();
+                        message =
+                            message.replaceFirst('Exception: ', '');
+
+                        _showSnackBar(
+                          message,
+                          Colors.redAccent,
+                        );
+                      }
                     },
                     style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F751B)),
-                    child: Text('Request Reset Code',
-                        style: GoogleFonts.montserrat(
-                            color: Colors.white, fontWeight: FontWeight.bold)),
+                      backgroundColor: const Color(0xFF0F751B),
+                    ),
+                    child: Text(
+                      'Request Reset Code',
+                      style: GoogleFonts.montserrat(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -239,7 +241,7 @@ class _LoginScreenState extends State<LoginScreen> {
       },
     ).whenComplete(() {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        emailController.dispose();
+        identifierController.dispose();
       });
     });
   }
@@ -247,19 +249,25 @@ class _LoginScreenState extends State<LoginScreen> {
   // =========================================================================
   // POP-UP FLOW 2: Verify 6-Digit Code Sheet
   // =========================================================================
-  void _showVerifyCodeSheet(BuildContext context, String email) {
+  void _showVerifyCodeSheet(
+    BuildContext context,
+    String identifier,
+  ) {
     final List<TextEditingController> otpControllers =
         List.generate(6, (index) => TextEditingController());
-    final List<FocusNode> focusNodes = List.generate(6, (index) => FocusNode());
+
+    final List<FocusNode> focusNodes =
+        List.generate(6, (index) => FocusNode());
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
+      builder: (sheetContext) {
         return Padding(
-          padding:
-              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+          ),
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: const BoxDecoration(
@@ -276,20 +284,27 @@ class _LoginScreenState extends State<LoginScreen> {
                     height: 4,
                     margin: const EdgeInsets.only(bottom: 20),
                     decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2)),
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-                Text('Verify Code',
-                    style: GoogleFonts.merriweather(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: const Color(0xFF0F4D20))),
+                Text(
+                  'Verify Code',
+                  style: GoogleFonts.merriweather(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF0F4D20),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text(
-                    'Enter the simulated 6-digit verification code for $email.',
-                    style: GoogleFonts.montserrat(
-                        fontSize: 12.5, color: Colors.grey.shade700)),
+                  'Enter the 6-digit verification code sent to your registered email.',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 12.5,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
                 const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -306,9 +321,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         obscureText: true,
                         obscuringCharacter: '●',
                         style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                         inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly
+                          FilteringTextInputFormatter.digitsOnly,
                         ],
                         decoration: InputDecoration(
                           counterText: '',
@@ -316,12 +333,16 @@ class _LoginScreenState extends State<LoginScreen> {
                           fillColor: const Color(0xFFDCDCDC),
                           contentPadding: EdgeInsets.zero,
                           border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none),
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide.none,
+                          ),
                           focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                  color: Color(0xFF0F751B), width: 2)),
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: Color(0xFF0F751B),
+                              width: 2,
+                            ),
+                          ),
                         ),
                         onChanged: (value) {
                           if (value.isNotEmpty && index < 5) {
@@ -339,21 +360,60 @@ class _LoginScreenState extends State<LoginScreen> {
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: () {
-                      final code = otpControllers.map((c) => c.text).join();
-                      if (code.length < 6) {
+                    onPressed: () async {
+                      final code =
+                          otpControllers.map((c) => c.text).join();
+
+                      if (code.length != 6) {
                         _showSnackBar(
-                            'Please enter all 6 digits.', Colors.redAccent);
+                          'Please enter all 6 digits.',
+                          Colors.redAccent,
+                        );
                         return;
                       }
-                      Navigator.pop(context);
-                      _showSetNewPasswordSheet(context);
+
+                      try {
+                        await AuthService.verifyForgotPasswordOtp(
+                          identifier: identifier,
+                          otp: int.parse(code),
+                        );
+
+                        if (!mounted) return;
+
+                        Navigator.pop(sheetContext);
+
+                        _showSetNewPasswordSheet(
+                          context,
+                          identifier,
+                        );
+
+                        _showSnackBar(
+                          'OTP verified successfully.',
+                          const Color(0xFF0F751B),
+                        );
+                      } catch (error) {
+                        if (!mounted) return;
+
+                        String message = error.toString();
+                        message =
+                            message.replaceFirst('Exception: ', '');
+
+                        _showSnackBar(
+                          message,
+                          Colors.redAccent,
+                        );
+                      }
                     },
                     style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F751B)),
-                    child: Text('Verify and Continue',
-                        style: GoogleFonts.montserrat(
-                            color: Colors.white, fontWeight: FontWeight.bold)),
+                      backgroundColor: const Color(0xFF0F751B),
+                    ),
+                    child: Text(
+                      'Verify and Continue',
+                      style: GoogleFonts.montserrat(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -365,6 +425,7 @@ class _LoginScreenState extends State<LoginScreen> {
       for (final controller in otpControllers) {
         controller.dispose();
       }
+
       for (final focusNode in focusNodes) {
         focusNode.dispose();
       }
@@ -372,11 +433,17 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // =========================================================================
-  // POP-UP FLOW 3: Set New Password Sheet (with Real-Time Validation)
+  // POP-UP FLOW 3: Set New Password Sheet
   // =========================================================================
-  void _showSetNewPasswordSheet(BuildContext context) {
-    final TextEditingController newPassController = TextEditingController();
-    final TextEditingController confirmPassController = TextEditingController();
+  void _showSetNewPasswordSheet(
+    BuildContext context,
+    String identifier,
+  ) {
+    final TextEditingController newPassController =
+        TextEditingController();
+    final TextEditingController confirmPassController =
+        TextEditingController();
+
     bool isNewVisible = false;
     bool isConfirmVisible = false;
 
@@ -384,16 +451,19 @@ class _LoginScreenState extends State<LoginScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
+      builder: (sheetContext) {
         return StatefulBuilder(
-          builder: (context, setSheetState) {
+          builder: (sheetContext, setSheetState) {
             final text = newPassController.text;
+
             final bool hasMinLength = text.length >= 8;
-            final bool hasMixedCase = text.contains(RegExp(r'[a-z]')) &&
-                text.contains(RegExp(r'[A-Z]'));
+            final bool hasMixedCase =
+                text.contains(RegExp(r'[a-z]')) &&
+                    text.contains(RegExp(r'[A-Z]'));
             final bool hasNumber = text.contains(RegExp(r'[0-9]'));
-            final bool hasSpecialChar =
-                text.contains(RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-\+=~/\\\[\]]'));
+            final bool hasSpecialChar = text.contains(
+              RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-\+=~/\\\[\]]'),
+            );
 
             Widget buildRequirement(String label, bool met) {
               return Padding(
@@ -404,16 +474,22 @@ class _LoginScreenState extends State<LoginScreen> {
                       width: 6,
                       height: 6,
                       decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: met ? const Color(0xFF0F751B) : Colors.grey),
+                        shape: BoxShape.circle,
+                        color: met
+                            ? const Color(0xFF0F751B)
+                            : Colors.grey,
+                      ),
                     ),
                     const SizedBox(width: 6),
-                    Text(label,
-                        style: GoogleFonts.montserrat(
-                            fontSize: 11,
-                            color: met ? Colors.black87 : Colors.black54,
-                            fontWeight:
-                                met ? FontWeight.w600 : FontWeight.w400)),
+                    Text(
+                      label,
+                      style: GoogleFonts.montserrat(
+                        fontSize: 11,
+                        color: met ? Colors.black87 : Colors.black54,
+                        fontWeight:
+                            met ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
                   ],
                 ),
               );
@@ -421,12 +497,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
             return Padding(
               padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).viewInsets.bottom),
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+              ),
               child: Container(
                 padding: const EdgeInsets.all(24),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(28)),
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -439,52 +517,84 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 4,
                           margin: const EdgeInsets.only(bottom: 20),
                           decoration: BoxDecoration(
-                              color: Colors.grey.shade300,
-                              borderRadius: BorderRadius.circular(2)),
+                            color: Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
                       ),
-                      Text('Set New Password',
-                          style: GoogleFonts.merriweather(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFF0F4D20))),
+                      Text(
+                        'Set New Password',
+                        style: GoogleFonts.merriweather(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF0F4D20),
+                        ),
+                      ),
                       const SizedBox(height: 16),
-                      Text('New Password',
-                          style: GoogleFonts.montserrat(
-                              fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      Text(
+                        'New Password',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       const SizedBox(height: 6),
                       TextField(
                         controller: newPassController,
                         obscureText: !isNewVisible,
-                        onChanged: (val) => setSheetState(() {}),
+                        onChanged: (value) {
+                          setSheetState(() {});
+                        },
                         decoration: InputDecoration(
                           hintText: 'Enter new password',
                           suffixIcon: IconButton(
                             icon: Icon(
-                                isNewVisible
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
-                                size: 20),
-                            onPressed: () => setSheetState(
-                                () => isNewVisible = !isNewVisible),
+                              isNewVisible
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              size: 20,
+                            ),
+                            onPressed: () {
+                              setSheetState(() {
+                                isNewVisible = !isNewVisible;
+                              });
+                            },
                           ),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
+                          contentPadding:
+                              const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
                           border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),
-                      buildRequirement('At least 8 characters', hasMinLength),
                       buildRequirement(
-                          'Mixed case letters (upper & lower)', hasMixedCase),
-                      buildRequirement('At least one number', hasNumber),
+                        'At least 8 characters',
+                        hasMinLength,
+                      ),
                       buildRequirement(
-                          'At least one special character', hasSpecialChar),
+                        'Mixed case letters (upper & lower)',
+                        hasMixedCase,
+                      ),
+                      buildRequirement(
+                        'At least one number',
+                        hasNumber,
+                      ),
+                      buildRequirement(
+                        'At least one special character',
+                        hasSpecialChar,
+                      ),
                       const SizedBox(height: 16),
-                      Text('Confirm Password',
-                          style: GoogleFonts.montserrat(
-                              fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      Text(
+                        'Confirm Password',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       const SizedBox(height: 6),
                       TextField(
                         controller: confirmPassController,
@@ -493,17 +603,26 @@ class _LoginScreenState extends State<LoginScreen> {
                           hintText: 'Re-enter new password',
                           suffixIcon: IconButton(
                             icon: Icon(
-                                isConfirmVisible
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
-                                size: 20),
-                            onPressed: () => setSheetState(
-                                () => isConfirmVisible = !isConfirmVisible),
+                              isConfirmVisible
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              size: 20,
+                            ),
+                            onPressed: () {
+                              setSheetState(() {
+                                isConfirmVisible =
+                                    !isConfirmVisible;
+                              });
+                            },
                           ),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
+                          contentPadding:
+                              const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
                           border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -511,33 +630,81 @@ class _LoginScreenState extends State<LoginScreen> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: () {
-                            if (newPassController.text !=
-                                confirmPassController.text) {
-                              _showSnackBar('Passwords do not match.',
-                                  Colors.orangeAccent);
+                          onPressed: () async {
+                            final newPassword =
+                                newPassController.text;
+                            final confirmPassword =
+                                confirmPassController.text;
+
+                            if (newPassword.isEmpty ||
+                                confirmPassword.isEmpty) {
+                              _showSnackBar(
+                                'Please enter and confirm your new password.',
+                                Colors.redAccent,
+                              );
                               return;
                             }
+
+                            if (newPassword != confirmPassword) {
+                              _showSnackBar(
+                                'Passwords do not match.',
+                                Colors.redAccent,
+                              );
+                              return;
+                            }
+
                             if (!hasMinLength ||
                                 !hasMixedCase ||
                                 !hasNumber ||
                                 !hasSpecialChar) {
                               _showSnackBar(
-                                  'Please meet all password requirements.',
-                                  Colors.redAccent);
+                                'Please meet all password requirements.',
+                                Colors.orangeAccent,
+                              );
                               return;
                             }
-                            Navigator.pop(context);
-                            _showSnackBar(
-                                'Password accepted in this prototype. Please log in when backend auth is connected.',
-                                const Color(0xFF0F751B));
+
+                            try {
+                              await AuthService.resetForgotPassword(
+                                identifier: identifier,
+                                password: newPassword,
+                                confirmPassword: confirmPassword,
+                              );
+
+                              if (!mounted) return;
+
+                              Navigator.pop(sheetContext);
+
+                              _showSnackBar(
+                                'Password updated successfully. You can now log in.',
+                                const Color(0xFF0F751B),
+                              );
+                            } catch (error) {
+                              if (!mounted) return;
+
+                              String message = error.toString();
+                              message = message.replaceFirst(
+                                'Exception: ',
+                                '',
+                              );
+
+                              _showSnackBar(
+                                message,
+                                Colors.redAccent,
+                              );
+                            }
                           },
                           style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0F751B)),
-                          child: Text('Update Password',
-                              style: GoogleFonts.montserrat(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
+                            backgroundColor:
+                                const Color(0xFF0F751B),
+                          ),
+                          child: Text(
+                            'Update Password',
+                            style: GoogleFonts.montserrat(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -807,28 +974,19 @@ class _LoginScreenState extends State<LoginScreen> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _isLoading ? null : _handleLogin,
+                          onPressed: _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF0F751B),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(6)),
                           ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2.5,
-                                  ),
-                                )
-                              : Text(
-                                  'Log in',
-                                  style: GoogleFonts.montserrat(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white),
-                                ),
+                          child: Text(
+                            'Log in',
+                            style: GoogleFonts.montserrat(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white),
+                          ),
                         ),
                       ),
                     ],
