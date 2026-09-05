@@ -1,218 +1,177 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'dart:async';
+import 'user_session.dart';
 
+/// Result returned by authentication operations.
+class AuthResult {
+  final bool success;
+  final String message;
+  final bool isUserNotFound;
+  final Map<String, dynamic>? user;
+
+  AuthResult({
+    required this.success,
+    required this.message,
+    this.isUserNotFound = false,
+    this.user,
+  });
+}
+
+/// Authentication Service Contract
+///
+/// ════════════════════════════════════════════════════════════════════════════
+/// 📌 NOTE FOR BACKEND DEVELOPERS:
+/// This file serves as the bridge between the Flutter UI and the Backend.
+/// Replace or connect your Supabase Auth or REST API endpoints here.
+/// ════════════════════════════════════════════════════════════════════════════
 class AuthService {
-  static const String baseUrl = 'http://127.0.0.1:8000';
+  // Temporary in-memory mock database for UI/UX testing
+  static final Map<String, Map<String, String>> _registeredUsers = {
+    'leader_justine': {
+      'username': 'LEADER_JUSTINE',
+      'email': 'justine@isu.edu.ph',
+      'password': 'Password123!',
+      'studentId': '21-02384',
+      'course': 'BS Information Technology',
+      'college': 'CCSICT',
+    },
+    'student_demo': {
+      'username': 'Student_Demo',
+      'email': 'student@isu.edu.ph',
+      'password': 'Password123!',
+      'studentId': '22-01122',
+      'course': 'BS Computer Science',
+      'college': 'CCSICT',
+    },
+  };
 
-  // =========================================================
-  // LOGIN
-  // =========================================================
-
-  static Future<Map<String, dynamic>> login({
-    required String identifier,
+  /// --------------------------------------------------------------------------
+  /// LOGIN
+  /// --------------------------------------------------------------------------
+  static Future<AuthResult> login({
+    required String username,
     required String password,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/login'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'identifier': identifier,
-        'password': password,
-      }),
-    );
+    final cleanUsername = username.trim();
 
-    final data = jsonDecode(response.body);
+    // Mock network latency (600ms)
+    await Future.delayed(const Duration(milliseconds: 600));
 
-    if (response.statusCode == 200) {
-      return data;
+    // TODO: [BACKEND DEV] Connect your Supabase / API endpoint here
+    // Example using Supabase:
+    // final response = await Supabase.instance.client.auth.signInWithPassword(...);
+
+    final key = cleanUsername.toLowerCase();
+
+    // 1. Check if user exists in database
+    if (!_registeredUsers.containsKey(key)) {
+      return AuthResult(
+        success: false,
+        isUserNotFound: true,
+        message:
+            'Unable to log in: Account "$cleanUsername" does not exist in the database. You need to create an account first.',
+      );
     }
 
-    throw Exception(
-      data['detail'] ?? 'Login failed.',
+    // 2. Check if password is correct
+    final user = _registeredUsers[key]!;
+    if (user['password'] != password) {
+      return AuthResult(
+        success: false,
+        isUserNotFound: false,
+        message:
+            'Unable to log in: Incorrect username or password. Please check your credentials.',
+      );
+    }
+
+    // 3. Update UserSession
+    UserSession.setLoggedInUser(username: user['username'] ?? cleanUsername);
+    if (user['email'] != null) UserSession.currentEmail = user['email']!;
+    if (user['studentId'] != null) UserSession.studentId = user['studentId']!;
+    if (user['course'] != null) UserSession.course = user['course']!;
+    if (user['college'] != null) UserSession.college = user['college']!;
+
+    return AuthResult(
+      success: true,
+      message: 'Login successful!',
+      user: user,
     );
   }
 
-  // =========================================================
-  // SIGN UP - REQUEST OTP
-  // =========================================================
-
-  static Future<Map<String, dynamic>> requestSignupOtp({
+  /// --------------------------------------------------------------------------
+  /// REGISTER
+  /// --------------------------------------------------------------------------
+  static Future<AuthResult> register({
     required String username,
     required String email,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/signup/request-otp'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'username': username,
-        'email': email,
-      }),
-    );
-
-    final data = jsonDecode(response.body);
-
-    if (response.statusCode == 200) {
-      return data;
-    }
-
-    throw Exception(
-      data['detail'] ?? 'Failed to send verification code.',
-    );
-  }
-
-  // =========================================================
-  // SIGN UP - VERIFY OTP
-  // =========================================================
-
-  static Future<Map<String, dynamic>> verifySignupOtp({
-    required String email,
-    required int otp,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/signup/verify-otp'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'email': email,
-        'otp': otp,
-      }),
-    );
-
-    final data = jsonDecode(response.body);
-
-    if (response.statusCode == 200) {
-      return data;
-    }
-
-    throw Exception(
-      data['detail'] ?? 'OTP verification failed.',
-    );
-  }
-
-  // =========================================================
-  // SIGN UP - SET PASSWORD
-  // =========================================================
-
-  static Future<Map<String, dynamic>> setSignupPassword({
-    required String email,
     required String password,
-    required String confirmPassword,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/signup/set-password'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'email': email,
-        'password': password,
-        'confirm_password': confirmPassword,
-      }),
-    );
+    final cleanUsername = username.trim();
+    final cleanEmail = email.trim();
 
-    final data = jsonDecode(response.body);
+    // Mock network latency (600ms)
+    await Future.delayed(const Duration(milliseconds: 600));
 
-    if (response.statusCode == 200) {
-      return data;
+    // TODO: [BACKEND DEV] Connect your Supabase / API endpoint here
+    // Example:
+    // final res = await Supabase.instance.client.auth.signUp(email: cleanEmail, password: password);
+
+    final key = cleanUsername.toLowerCase();
+    if (_registeredUsers.containsKey(key)) {
+      return AuthResult(
+        success: false,
+        message:
+            'Username "$cleanUsername" is already taken. Please choose another.',
+      );
     }
 
-    throw Exception(
-      data['detail'] ?? 'Failed to create account.',
+    final newUser = {
+      'username': cleanUsername,
+      'email': cleanEmail,
+      'password': password,
+      'studentId': '23-${(10000 + cleanUsername.hashCode.abs() % 90000)}',
+      'course': 'BS Information Technology',
+      'college': 'CCSICT',
+    };
+
+    _registeredUsers[key] = newUser;
+    UserSession.setRegisteredUser(
+      username: cleanUsername,
+      email: cleanEmail,
+    );
+
+    return AuthResult(
+      success: true,
+      message: 'Account created successfully in database! Please log in.',
+      user: newUser,
     );
   }
 
-  // =========================================================
-  // FORGOT PASSWORD - REQUEST OTP
-  // =========================================================
-
-  static Future<Map<String, dynamic>> requestForgotPasswordOtp({
-    required String identifier,
+  /// --------------------------------------------------------------------------
+  /// RESET PASSWORD
+  /// --------------------------------------------------------------------------
+  static Future<AuthResult> resetPassword({
+    required String email,
+    required String newPassword,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/forgot-password/request-otp'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'identifier': identifier,
-      }),
-    );
+    final cleanEmail = email.trim().toLowerCase();
 
-    final data = jsonDecode(response.body);
+    // Mock network latency
+    await Future.delayed(const Duration(milliseconds: 600));
 
-    if (response.statusCode == 200) {
-      return data;
+    for (final entry in _registeredUsers.values) {
+      if (entry['email']?.toLowerCase() == cleanEmail) {
+        entry['password'] = newPassword;
+        return AuthResult(
+          success: true,
+          message:
+              'Password updated successfully. Please log in with your new password.',
+        );
+      }
     }
 
-    throw Exception(
-      data['detail'] ?? 'Failed to send password reset code.',
-    );
-  }
-
-  // =========================================================
-  // FORGOT PASSWORD - VERIFY OTP
-  // =========================================================
-
-  static Future<Map<String, dynamic>> verifyForgotPasswordOtp({
-    required String identifier,
-    required int otp,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/forgot-password/verify-otp'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'identifier': identifier,
-        'otp': otp,
-      }),
-    );
-
-    final data = jsonDecode(response.body);
-
-    if (response.statusCode == 200) {
-      return data;
-    }
-
-    throw Exception(
-      data['detail'] ?? 'OTP verification failed.',
-    );
-  }
-
-  // =========================================================
-  // FORGOT PASSWORD - RESET PASSWORD
-  // =========================================================
-
-  static Future<Map<String, dynamic>> resetForgotPassword({
-    required String identifier,
-    required String password,
-    required String confirmPassword,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/forgot-password/reset-password'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'identifier': identifier,
-        'password': password,
-        'confirm_password': confirmPassword,
-      }),
-    );
-
-    final data = jsonDecode(response.body);
-
-    if (response.statusCode == 200) {
-      return data;
-    }
-
-    throw Exception(
-      data['detail'] ?? 'Failed to reset password.',
+    return AuthResult(
+      success: false,
+      message: 'No account found with the email "$email".',
     );
   }
 }
