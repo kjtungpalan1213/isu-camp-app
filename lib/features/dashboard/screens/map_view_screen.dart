@@ -1,15 +1,32 @@
+import 'dart:async';
+
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../data/campus_dataset.dart';
 import '../models/campus_models.dart';
 import '../widgets/navigation_sheets.dart';
 import 'user_info_screen.dart';
-import 'package:flutter_map/flutter_map.dart';
+
+final LatLngBounds isuEchagueBounds = LatLngBounds(
+  const LatLng(16.7120, 121.6830),
+  const LatLng(16.7310, 121.7010),
+);
+
+const List<LatLng> isuEchagueMockBoundary = [
+  LatLng(16.7120, 121.6830),
+  LatLng(16.7120, 121.7010),
+  LatLng(16.7310, 121.7010),
+  LatLng(16.7310, 121.6830),
+];
 
 enum NavigationUiState {
   idle,
   buildingDetails,
+  chooseStartingPoint,
   chooseRoute,
   routeDetails,
   navigating,
@@ -28,15 +45,194 @@ class _MapViewScreenState extends State<MapViewScreen> {
   final MapController _mapController = MapController();
 
   NavigationUiState _navigationState = NavigationUiState.idle;
-  CampusBuilding _selectedBuilding = isuCampusBuildings.first;
+  CampusBuilding? _selectedBuilding;
+  NavigationOrigin _selectedOrigin = const NavigationOrigin(
+    id: 'main_gate',
+    label: 'ISU Main Gate',
+    coordinate: isuMainGateNode,
+    type: NavigationOriginType.mainGate,
+  );
   RouteType _selectedRouteType = RouteType.comfortableShaded;
   TransportMode _selectedTransportMode = TransportMode.walking;
   String _selectedCategoryFilter = 'All';
+  LatLng? _currentUserLocation;
+  String? _locationStatus;
+  bool _isLocating = false;
+  StreamSubscription<Position>? _positionSubscription;
+
+  bool get _isNavigationActive =>
+      _navigationState == NavigationUiState.navigating ||
+      _navigationState == NavigationUiState.arrived;
+
+  List<NavigationOrigin> get _availableOrigins => [
+        if (_currentUserLocation != null &&
+            isuEchagueBounds.contains(_currentUserLocation!))
+          NavigationOrigin(
+            id: 'current_location',
+            label: 'My Current Location',
+            coordinate: _currentUserLocation!,
+            type: NavigationOriginType.currentLocation,
+          ),
+        const NavigationOrigin(
+          id: 'campus_center',
+          label: 'ISU Echague Campus Center',
+          coordinate: isuCampusCenter,
+          type: NavigationOriginType.campusCenter,
+        ),
+        const NavigationOrigin(
+          id: 'main_gate',
+          label: 'ISU Main Gate',
+          coordinate: isuMainGateNode,
+          type: NavigationOriginType.mainGate,
+        ),
+        ...isuCampusBuildings
+            .where((building) => building.id != _selectedBuilding?.id)
+            .map(
+              (building) => NavigationOrigin(
+                id: building.id,
+                label: building.name,
+                coordinate: building.coordinate,
+                type: NavigationOriginType.campusLocation,
+              ),
+            ),
+      ];
+
+  List<LatLng> get _mockRoutePoints {
+    final destination = _selectedBuilding;
+    if (destination == null) return const [];
+
+    final start = _selectedOrigin.coordinate;
+    final end = destination.coordinate;
+    final curveOffset =
+        _selectedRouteType == RouteType.comfortableShaded ? 0.00018 : 0.00005;
+    final midpoint = LatLng(
+      (start.latitude + end.latitude) / 2 + curveOffset,
+      (start.longitude + end.longitude) / 2 - curveOffset,
+    );
+    return [start, midpoint, end];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCurrentLocation();
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _positionSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _initializeCurrentLocation() async {
+    if (_isLocating) return;
+    setState(() {
+      _isLocating = true;
+      _locationStatus = 'Getting your current location...';
+    });
+
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        setState(() => _locationStatus =
+            'Turn on Location Services to use your position.');
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        setState(() => _locationStatus =
+            'Location permission is needed to show your position.');
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      _updateCurrentPosition(position);
+
+      await _positionSubscription?.cancel();
+      _positionSubscription = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 5,
+        ),
+      ).listen(_updateCurrentPosition);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _locationStatus =
+            'Current location is unavailable. You can choose another starting point.');
+      }
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
+  }
+
+  void _updateCurrentPosition(Position position) {
+    if (!mounted) return;
+    setState(() {
+      _currentUserLocation = LatLng(position.latitude, position.longitude);
+      _locationStatus = isuEchagueBounds.contains(_currentUserLocation!)
+          ? null
+          : 'You are outside the supported ISU Echague campus area.';
+      if (_selectedOrigin.type == NavigationOriginType.currentLocation) {
+        _selectedOrigin = NavigationOrigin(
+          id: 'current_location',
+          label: 'My Current Location',
+          coordinate: _currentUserLocation!,
+          type: NavigationOriginType.currentLocation,
+        );
+      }
+    });
+
+    if (_navigationState == NavigationUiState.navigating &&
+        isuEchagueBounds.contains(_currentUserLocation!)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mapController.move(_currentUserLocation!, 18.5);
+      });
+    }
+  }
+
+  void _cancelDirections() {
+    setState(() => _navigationState = NavigationUiState.idle);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _mapController.move(isuCampusCenter, 16.8);
+    });
+  }
+
+  void _startNavigation() {
+    FocusScope.of(context).unfocus();
+    setState(() => _navigationState = NavigationUiState.navigating);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _mapController.move(_selectedOrigin.coordinate, 18.5);
+    });
+  }
+
+  Future<void> _confirmEndNavigation() async {
+    final shouldEnd = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('End navigation?'),
+        content: const Text('Your current route progress will be cleared.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Continue Navigation'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('End Route'),
+          ),
+        ],
+      ),
+    );
+    if (shouldEnd == true && mounted) _cancelDirections();
   }
 
   List<CampusBuilding> _getFilteredBuildings() {
@@ -121,10 +317,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
-                initialCenter: isuMainGateNode,
-                initialZoom: 18.2,
-                minZoom: 14.0,
+                initialCenter: isuCampusCenter,
+                initialZoom: 16.8,
+                minZoom: 15.5,
                 maxZoom: 19.5,
+                cameraConstraint: CameraConstraint.contain(
+                  bounds: isuEchagueBounds,
+                ),
                 onTap: (_, __) {
                   if (_navigationState == NavigationUiState.buildingDetails) {
                     setState(() {
@@ -140,16 +339,26 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   userAgentPackageName: 'com.isucamp.app',
                 ),
 
+                PolygonLayer(
+                  polygons: [
+                    Polygon(
+                      points: isuEchagueMockBoundary,
+                      color: const Color(0xFF0F751B).withValues(alpha: 0.05),
+                      borderColor: const Color(0xFF0F751B),
+                      borderStrokeWidth: 2,
+                    ),
+                  ],
+                ),
+
                 // Active Route Polylines (if route chosen or navigating)
-                if (_navigationState == NavigationUiState.chooseRoute ||
+                if (_navigationState == NavigationUiState.chooseStartingPoint ||
+                    _navigationState == NavigationUiState.chooseRoute ||
                     _navigationState == NavigationUiState.routeDetails ||
                     _navigationState == NavigationUiState.navigating)
                   PolylineLayer(
                     polylines: [
                       Polyline(
-                        points: _selectedBuilding.routes.isNotEmpty
-                            ? _selectedBuilding.routes.first.pathPoints
-                            : [],
+                        points: _mockRoutePoints,
                         strokeWidth: 5.0,
                         color: const Color(0xFF0F751B),
                         borderColor: Colors.white,
@@ -161,7 +370,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 // Building Markers with Visual Name Badges on the Map
                 MarkerLayer(
                   markers: filteredBuildings.map((building) {
-                    final isSelected = _selectedBuilding.id == building.id;
+                    final isSelected = _selectedBuilding?.id == building.id;
                     return Marker(
                       point: building.coordinate,
                       width: 140,
@@ -250,254 +459,380 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     );
                   }).toList(),
                 ),
+
+                if (_selectedBuilding != null &&
+                    _navigationState != NavigationUiState.idle &&
+                    _navigationState != NavigationUiState.buildingDetails &&
+                    _navigationState != NavigationUiState.arrived)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _selectedOrigin.coordinate,
+                        width: 38,
+                        height: 38,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF22C55E),
+                              width: 4,
+                            ),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 6),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.trip_origin,
+                            color: Color(0xFF0F751B),
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                if (_currentUserLocation != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _currentUserLocation!,
+                        width: 44,
+                        height: 44,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF2563EB).withValues(alpha: 0.18),
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2563EB),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 3),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.black26,
+                                  blurRadius: 5,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                RichAttributionWidget(
+                  attributions: [
+                    TextSourceAttribution(
+                      'OpenStreetMap contributors',
+                      onTap: () {},
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
 
           // Floating Map Action Buttons (Recenter & Zoom)
-          Positioned(
-            right: 16,
-            top: topPadding + 170,
-            child: Column(
-              children: [
-                // Recenter to ISU Echague Main Gate
-                FloatingActionButton.small(
-                  heroTag: 'btn_recenter',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0F751B),
-                  elevation: 4,
-                  onPressed: () {
-                    _mapController.move(isuMainGateNode, 16.5);
-                  },
-                  child: const Icon(Icons.my_location, size: 20),
+          if (isuCampusBuildings.isEmpty)
+            Center(
+              child: Container(
+                margin: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 12),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                // Zoom In
-                FloatingActionButton.small(
-                  heroTag: 'btn_zoom_in',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0F751B),
-                  elevation: 4,
-                  onPressed: () {
-                    final currentZoom = _mapController.camera.zoom;
-                    _mapController.move(
-                      _mapController.camera.center,
-                      (currentZoom + 1).clamp(14.0, 19.0),
-                    );
-                  },
-                  child: const Icon(Icons.add, size: 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.location_off_outlined,
+                      size: 42,
+                      color: Color(0xFF0F751B),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'No campus locations available yet.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.montserrat(
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF0B351E),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Published locations from the admin map will appear here.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.montserrat(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                // Zoom Out
-                FloatingActionButton.small(
-                  heroTag: 'btn_zoom_out',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0F751B),
-                  elevation: 4,
-                  onPressed: () {
-                    final currentZoom = _mapController.camera.zoom;
-                    _mapController.move(
-                      _mapController.camera.center,
-                      (currentZoom - 1).clamp(14.0, 19.0),
-                    );
-                  },
-                  child: const Icon(Icons.remove, size: 20),
-                ),
-              ],
+              ),
             ),
-          ),
 
-          // 2. Dark Green Header Bar
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: EdgeInsets.fromLTRB(20, topPadding + 10, 20, 14),
-              decoration: const BoxDecoration(
-                color: Color(0xFF0B351E),
-                borderRadius: BorderRadius.vertical(
-                  bottom: Radius.circular(28),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 10,
-                    offset: Offset(0, 4),
+          if (!_isNavigationActive)
+            Positioned(
+              right: 16,
+              top: topPadding + 170,
+              child: Column(
+                children: [
+                  // Recenter to ISU Echague Main Gate
+                  FloatingActionButton.small(
+                    heroTag: 'btn_recenter',
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF0F751B),
+                    elevation: 4,
+                    onPressed: () {
+                      if (_currentUserLocation != null) {
+                        _mapController.move(_currentUserLocation!, 18.0);
+                      } else {
+                        _initializeCurrentLocation();
+                        _mapController.move(isuCampusCenter, 16.8);
+                      }
+                    },
+                    child: const Icon(Icons.my_location, size: 20),
+                  ),
+                  const SizedBox(height: 10),
+                  // Zoom In
+                  FloatingActionButton.small(
+                    heroTag: 'btn_zoom_in',
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF0F751B),
+                    elevation: 4,
+                    onPressed: () {
+                      final currentZoom = _mapController.camera.zoom;
+                      _mapController.move(
+                        _mapController.camera.center,
+                        (currentZoom + 1).clamp(15.5, 19.5),
+                      );
+                    },
+                    child: const Icon(Icons.add, size: 20),
+                  ),
+                  const SizedBox(height: 8),
+                  // Zoom Out
+                  FloatingActionButton.small(
+                    heroTag: 'btn_zoom_out',
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF0F751B),
+                    elevation: 4,
+                    onPressed: () {
+                      final currentZoom = _mapController.camera.zoom;
+                      _mapController.move(
+                        _mapController.camera.center,
+                        (currentZoom - 1).clamp(15.5, 19.5),
+                      );
+                    },
+                    child: const Icon(Icons.remove, size: 20),
                   ),
                 ],
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: 28,
-                            height: 28,
-                            child: ClipOval(
-                              child: Image.asset(
-                                'assets/images/logo_kumpas_app.png',
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                  Icons.navigation,
+            ),
+
+          // 2. Dark Green Header Bar
+          if (!_isNavigationActive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.fromLTRB(20, topPadding + 10, 20, 14),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF0B351E),
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(28),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: ClipOval(
+                                child: Image.asset(
+                                  'assets/images/logo_kumpas_app.png',
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(
+                                    Icons.navigation,
+                                    color: Colors.white,
+                                    size: 22,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'KUMPAS',
+                              style: GoogleFonts.montserrat(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.6,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => UserInfoScreen(
+                                      onNavigateToBuilding: (destination) {
+                                        _selectBuildingAndShowDetails(
+                                            destination);
+                                        setState(() {
+                                          _navigationState = NavigationUiState
+                                              .chooseStartingPoint;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF174A2F),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white24,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.person_outline,
                                   color: Colors.white,
                                   size: 22,
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'KUMPAS',
-                            style: GoogleFonts.montserrat(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => UserInfoScreen(
-                                    onNavigateToBuilding: (destination) {
-                                      _selectBuildingAndShowDetails(
-                                          destination);
-                                      setState(() {
-                                        _navigationState =
-                                            NavigationUiState.chooseRoute;
-                                      });
-                                    },
+                            const SizedBox(width: 10),
+                            SizedBox(
+                              width: 36,
+                              height: 36,
+                              child: ClipOval(
+                                child: Image.asset(
+                                  'assets/images/logo_isu_png.png',
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(
+                                    Icons.school,
+                                    color: Colors.white,
+                                    size: 24,
                                   ),
                                 ),
-                              );
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF174A2F),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white24,
-                                  width: 1,
-                                ),
                               ),
-                              child: const Icon(
-                                Icons.person_outline,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Search Field Bar
+                    Container(
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF174A2F),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.search,
+                            color: Colors.white70,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              onChanged: (val) => setState(() {}),
+                              style: GoogleFonts.montserrat(
                                 color: Colors.white,
-                                size: 22,
+                                fontSize: 13,
                               ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          SizedBox(
-                            width: 36,
-                            height: 36,
-                            child: ClipOval(
-                              child: Image.asset(
-                                'assets/images/logo_isu_png.png',
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                  Icons.school,
-                                  color: Colors.white,
-                                  size: 24,
+                              decoration: InputDecoration(
+                                hintText:
+                                    'Search building, parking, or room...',
+                                hintStyle: GoogleFonts.montserrat(
+                                  color: Colors.white60,
+                                  fontSize: 12.5,
                                 ),
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
                               ),
                             ),
                           ),
+                          if (_searchController.text.isNotEmpty)
+                            GestureDetector(
+                              onTap: () {
+                                _searchController.clear();
+                                setState(() {});
+                              },
+                              child: const Icon(
+                                Icons.close,
+                                color: Colors.white70,
+                                size: 18,
+                              ),
+                            ),
                         ],
                       ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Search Field Bar
-                  Container(
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF174A2F),
-                      borderRadius: BorderRadius.circular(10),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.search,
-                          color: Colors.white70,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _searchController,
-                            onChanged: (val) => setState(() {}),
-                            style: GoogleFonts.montserrat(
-                              color: Colors.white,
-                              fontSize: 13,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: 'Search building, parking, or room...',
-                              hintStyle: GoogleFonts.montserrat(
-                                color: Colors.white60,
-                                fontSize: 12.5,
-                              ),
-                              border: InputBorder.none,
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ),
-                        if (_searchController.text.isNotEmpty)
-                          GestureDetector(
-                            onTap: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                            child: const Icon(
-                              Icons.close,
-                              color: Colors.white70,
-                              size: 18,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
 
-                  const SizedBox(height: 10),
+                    const SizedBox(height: 10),
 
-                  // Category Filter Chips Row
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    child: Row(
-                      children: [
-                        _buildFilterChip('All', Icons.grid_view),
-                        _buildFilterChip('Colleges', Icons.school),
-                        _buildFilterChip('Parkings', Icons.local_parking),
-                        _buildFilterChip('Shaded', Icons.park_outlined),
-                      ],
+                    // Category Filter Chips Row
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      child: Row(
+                        children: [
+                          _buildFilterChip('All', Icons.grid_view),
+                          _buildFilterChip('Colleges', Icons.school),
+                          _buildFilterChip('Parkings', Icons.local_parking),
+                          _buildFilterChip('Shaded', Icons.park_outlined),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
 
           // Floating Search Suggestions Dropdown (appears when user is typing)
-          if (_searchController.text.trim().isNotEmpty)
+          if (!_isNavigationActive && _searchController.text.trim().isNotEmpty)
             Positioned(
               top: topPadding + 155,
               left: 20,
@@ -579,9 +914,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                       .toLowerCase()
                                       .trim();
                                   final matchedRooms = bldg.rooms
-                                      .where((r) => r.title
-                                          .toLowerCase()
-                                          .contains(query))
+                                      .where((r) =>
+                                          r.title.toLowerCase().contains(query))
                                       .toList();
 
                                   if (query.isNotEmpty &&
@@ -624,13 +958,50 @@ class _MapViewScreenState extends State<MapViewScreen> {
             ),
 
           // 3. Bottom Sheet Overlay State Machine
-          if (_navigationState == NavigationUiState.buildingDetails)
+          if (_locationStatus != null && !_isNavigationActive)
+            Positioned(
+              top: topPadding + 170,
+              left: 16,
+              right: 76,
+              child: Material(
+                color: Colors.white,
+                elevation: 3,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _isLocating ? Icons.gps_fixed : Icons.location_off,
+                        size: 18,
+                        color: const Color(0xFF0F751B),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _isLocating
+                              ? 'Getting your current location...'
+                              : _locationStatus!,
+                          style: GoogleFonts.montserrat(fontSize: 10.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          if (_selectedBuilding != null &&
+              _navigationState == NavigationUiState.buildingDetails)
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
               child: BuildingDetailsSheet(
-                building: _selectedBuilding,
+                building: _selectedBuilding!,
                 onClose: () {
                   setState(() {
                     _navigationState = NavigationUiState.idle;
@@ -638,24 +1009,56 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 },
                 onDirectionsTap: () {
                   setState(() {
+                    _navigationState = NavigationUiState.chooseStartingPoint;
+                  });
+                },
+              ),
+            ),
+
+          if (_selectedBuilding != null &&
+              _navigationState == NavigationUiState.chooseStartingPoint)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: ChooseStartingPointSheet(
+                destination: _selectedBuilding!,
+                origins: _availableOrigins,
+                selectedOrigin: _selectedOrigin,
+                onOriginSelected: (origin) {
+                  setState(() => _selectedOrigin = origin);
+                },
+                onBack: () {
+                  setState(() {
+                    _navigationState = NavigationUiState.buildingDetails;
+                  });
+                },
+                onCancel: _cancelDirections,
+                onContinue: () {
+                  setState(() {
                     _navigationState = NavigationUiState.chooseRoute;
                   });
                 },
               ),
             ),
 
-          if (_navigationState == NavigationUiState.chooseRoute)
+          if (_selectedBuilding != null &&
+              _navigationState == NavigationUiState.chooseRoute)
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
               child: ChooseRouteSheet(
-                destination: _selectedBuilding,
+                destination: _selectedBuilding!,
+                origin: _selectedOrigin,
+                initialRouteType: _selectedRouteType,
+                initialTransportMode: _selectedTransportMode,
                 onBack: () {
                   setState(() {
-                    _navigationState = NavigationUiState.buildingDetails;
+                    _navigationState = NavigationUiState.chooseStartingPoint;
                   });
                 },
+                onCancel: _cancelDirections,
                 onViewRoute: (type, mode) {
                   setState(() {
                     _selectedRouteType = type;
@@ -666,13 +1069,15 @@ class _MapViewScreenState extends State<MapViewScreen> {
               ),
             ),
 
-          if (_navigationState == NavigationUiState.routeDetails)
+          if (_selectedBuilding != null &&
+              _navigationState == NavigationUiState.routeDetails)
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
               child: RouteDetailsSheet(
-                destination: _selectedBuilding,
+                destination: _selectedBuilding!,
+                origin: _selectedOrigin,
                 selectedRouteType: _selectedRouteType,
                 selectedTransportMode: _selectedTransportMode,
                 onBack: () {
@@ -680,26 +1085,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     _navigationState = NavigationUiState.chooseRoute;
                   });
                 },
-                onStartNavigation: () {
-                  setState(() {
-                    _navigationState = NavigationUiState.navigating;
-                  });
-                },
+                onCancel: _cancelDirections,
+                onStartNavigation: _startNavigation,
               ),
             ),
 
           // 4. Full-Screen Turn-by-Turn Navigation HUD
-          if (_navigationState == NavigationUiState.navigating)
+          if (_selectedBuilding != null &&
+              _navigationState == NavigationUiState.navigating)
             Positioned.fill(
               child: ActiveNavigationHud(
-                destination: _selectedBuilding,
+                destination: _selectedBuilding!,
+                origin: _selectedOrigin,
                 selectedRouteType: _selectedRouteType,
                 selectedTransportMode: _selectedTransportMode,
-                onEndRoute: () {
-                  setState(() {
-                    _navigationState = NavigationUiState.idle;
-                  });
-                },
+                onEndRoute: _confirmEndNavigation,
                 onSimulateArrival: () {
                   setState(() {
                     _navigationState = NavigationUiState.arrived;
@@ -709,15 +1109,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
             ),
 
           // 5. "You've Arrived!" HUD (Mockup Screen)
-          if (_navigationState == NavigationUiState.arrived)
+          if (_selectedBuilding != null &&
+              _navigationState == NavigationUiState.arrived)
             Positioned.fill(
               child: ArrivalHud(
-                destination: _selectedBuilding,
-                onFinish: () {
-                  setState(() {
-                    _navigationState = NavigationUiState.idle;
-                  });
-                },
+                destination: _selectedBuilding!,
+                onFinish: _cancelDirections,
               ),
             ),
         ],

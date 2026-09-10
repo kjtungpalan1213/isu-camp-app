@@ -1,6 +1,23 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+class LoginException implements Exception {
+  final String message;
+  final int? retryAfterSeconds;
+  final int? failedAttempts;
+  final int? remainingAttempts;
+
+  const LoginException(
+    this.message, {
+    this.retryAfterSeconds,
+    this.failedAttempts,
+    this.remainingAttempts,
+  });
+
+  @override
+  String toString() => message;
+}
+
 class AuthService {
   static const String baseUrl = 'http://127.0.0.1:8000';
 
@@ -29,8 +46,17 @@ class AuthService {
       return data;
     }
 
-    throw Exception(
+    final retryAfter = response.headers['retry-after'];
+    final failedAttempts = response.headers['x-login-attempts'];
+    final remainingAttempts = response.headers['x-login-attempts-remaining'];
+    throw LoginException(
       data['detail'] ?? 'Login failed.',
+      retryAfterSeconds: retryAfter == null ? null : int.tryParse(retryAfter),
+      failedAttempts:
+          failedAttempts == null ? null : int.tryParse(failedAttempts),
+      remainingAttempts: remainingAttempts == null
+          ? null
+          : int.tryParse(remainingAttempts),
     );
   }
 

@@ -1,39 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import '../models/campus_models.dart';
 
-// Helper to compute dynamic distance & travel time based on building and mode
+// Frontend-only route estimate. Replace this helper with backend route values.
 class RouteMetricsHelper {
-  static int getBaseDistance(CampusBuilding building) {
-    switch (building.id) {
-      case 'bldg_ca_sbo':
-        return 400;
-      case 'bldg_ccsict':
-        return 650;
-      case 'bldg_coe':
-        return 750;
-      case 'bldg_admin':
-        return 280;
-      case 'bldg_library':
-        return 450;
-      case 'bldg_gym':
-        return 1100;
-      case 'parking_main_gate':
-        return 150;
-      case 'parking_agriculture':
-        return 420;
-      case 'parking_engineering_ccsict':
-        return 780;
-      default:
-        return 500;
-    }
+  static int getBaseDistance(
+    NavigationOrigin origin,
+    CampusBuilding building,
+  ) {
+    final meters = const Distance().as(
+      LengthUnit.Meter,
+      origin.coordinate,
+      building.coordinate,
+    );
+    return meters < 30 ? 30 : meters.round();
   }
 
   static String getDistanceString(
-      CampusBuilding building, RouteType routeType, TransportMode mode) {
-    int base = getBaseDistance(building);
+    NavigationOrigin origin,
+    CampusBuilding building,
+    RouteType routeType,
+    TransportMode mode,
+  ) {
+    int base = getBaseDistance(origin, building);
     if (routeType == RouteType.comfortableShaded) {
-      base = (base * 1.6).round();
+      base = (base * 1.18).round();
     }
     if (mode == TransportMode.car) {
       base = (base * 1.25).round();
@@ -43,11 +35,35 @@ class RouteMetricsHelper {
     return '${base}m';
   }
 
+  static String getHeadingInstruction(
+    NavigationOrigin origin,
+    CampusBuilding building,
+  ) {
+    final latitudeChange =
+        building.coordinate.latitude - origin.coordinate.latitude;
+    final longitudeChange =
+        building.coordinate.longitude - origin.coordinate.longitude;
+    final vertical = latitudeChange >= 0 ? 'North' : 'South';
+    final horizontal = longitudeChange >= 0 ? 'east' : 'west';
+
+    if (latitudeChange.abs() > longitudeChange.abs() * 2) {
+      return 'Head $vertical';
+    }
+    if (longitudeChange.abs() > latitudeChange.abs() * 2) {
+      return 'Head ${horizontal[0].toUpperCase()}${horizontal.substring(1)}';
+    }
+    return 'Head $vertical$horizontal';
+  }
+
   static String getTimeString(
-      CampusBuilding building, RouteType routeType, TransportMode mode) {
-    int base = getBaseDistance(building);
+    NavigationOrigin origin,
+    CampusBuilding building,
+    RouteType routeType,
+    TransportMode mode,
+  ) {
+    int base = getBaseDistance(origin, building);
     if (routeType == RouteType.comfortableShaded) {
-      base = (base * 1.6).round();
+      base = (base * 1.18).round();
     }
 
     int minutes;
@@ -68,10 +84,14 @@ class RouteMetricsHelper {
   }
 
   static String getArrivalTime(
-      CampusBuilding building, RouteType routeType, TransportMode mode) {
-    int base = getBaseDistance(building);
+    NavigationOrigin origin,
+    CampusBuilding building,
+    RouteType routeType,
+    TransportMode mode,
+  ) {
+    int base = getBaseDistance(origin, building);
     if (routeType == RouteType.comfortableShaded) {
-      base = (base * 1.6).round();
+      base = (base * 1.18).round();
     }
 
     int minutes;
@@ -90,7 +110,8 @@ class RouteMetricsHelper {
         break;
     }
     final now = DateTime.now().add(Duration(minutes: minutes));
-    final hour = now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
+    final hour =
+        now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
     final minuteStr = now.minute.toString().padLeft(2, '0');
     final period = now.hour >= 12 ? 'pm' : 'am';
     return '$hour:$minuteStr $period';
@@ -236,7 +257,8 @@ class BuildingDetailsSheet extends StatelessWidget {
                 const SizedBox(width: 12),
                 ElevatedButton.icon(
                   onPressed: onDirectionsTap,
-                  icon: const Icon(Icons.directions, size: 16, color: Colors.white),
+                  icon: const Icon(Icons.directions,
+                      size: 16, color: Colors.white),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0F5A28),
                     padding: const EdgeInsets.symmetric(
@@ -322,7 +344,8 @@ class BuildingDetailsSheet extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF0F751B).withValues(alpha: 0.1),
+                            color:
+                                const Color(0xFF0F751B).withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
@@ -361,7 +384,8 @@ class BuildingDetailsSheet extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFECC700).withValues(alpha: 0.18),
+                            color:
+                                const Color(0xFFECC700).withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
@@ -404,19 +428,216 @@ class BuildingDetailsSheet extends StatelessWidget {
 }
 
 // =========================================================================
-// 2. CHOOSE ROUTE MODAL SHEET (Design Mockup Images 1 & 3)
+// 2. CHOOSE STARTING POINT
+// =========================================================================
+class ChooseStartingPointSheet extends StatelessWidget {
+  final CampusBuilding destination;
+  final List<NavigationOrigin> origins;
+  final NavigationOrigin selectedOrigin;
+  final ValueChanged<NavigationOrigin> onOriginSelected;
+  final VoidCallback onBack;
+  final VoidCallback onCancel;
+  final VoidCallback onContinue;
+
+  const ChooseStartingPointSheet({
+    super.key,
+    required this.destination,
+    required this.origins,
+    required this.selectedOrigin,
+    required this.onOriginSelected,
+    required this.onBack,
+    required this.onCancel,
+    required this.onContinue,
+  });
+
+  IconData _iconFor(NavigationOriginType type) {
+    switch (type) {
+      case NavigationOriginType.currentLocation:
+        return Icons.my_location;
+      case NavigationOriginType.campusCenter:
+        return Icons.center_focus_strong;
+      case NavigationOriginType.mainGate:
+        return Icons.door_front_door_outlined;
+      case NavigationOriginType.campusLocation:
+        return Icons.location_on_outlined;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.68,
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black26,
+            blurRadius: 20,
+            offset: Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back, size: 18),
+                label: const Text('Back'),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: onCancel,
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+          Text(
+            'CHOOSE STARTING POINT',
+            style: GoogleFonts.montserrat(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF0B351E),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Going to ${destination.name}',
+            style: GoogleFonts.montserrat(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: origins.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final origin = origins[index];
+                final isSelected = selectedOrigin.id == origin.id;
+                return Material(
+                  color: isSelected
+                      ? const Color(0xFFECFDF3)
+                      : const Color(0xFFF8FAF9),
+                  borderRadius: BorderRadius.circular(14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => onOriginSelected(origin),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: isSelected
+                              ? const Color(0xFF0F751B)
+                              : Colors.grey.shade200,
+                          width: isSelected ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _iconFor(origin.type),
+                            color: const Color(0xFF0F751B),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              origin.label,
+                              style: GoogleFonts.montserrat(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            isSelected
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                            color: isSelected
+                                ? const Color(0xFF0F751B)
+                                : Colors.grey.shade400,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: onContinue,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F5A28),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              child: Text(
+                'Continue to Route Options',
+                style: GoogleFonts.montserrat(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =========================================================================
+// 3. CHOOSE ROUTE MODAL SHEET (Design Mockup Images 1 & 3)
 // =========================================================================
 class ChooseRouteSheet extends StatefulWidget {
   final CampusBuilding destination;
-  final String originName;
+  final NavigationOrigin origin;
+  final RouteType initialRouteType;
+  final TransportMode initialTransportMode;
   final VoidCallback onBack;
-  final Function(RouteType selectedType, TransportMode selectedMode) onViewRoute;
+  final VoidCallback onCancel;
+  final Function(RouteType selectedType, TransportMode selectedMode)
+      onViewRoute;
 
   const ChooseRouteSheet({
     super.key,
     required this.destination,
-    this.originName = 'Your Location',
+    required this.origin,
+    this.initialRouteType = RouteType.comfortableShaded,
+    this.initialTransportMode = TransportMode.walking,
     required this.onBack,
+    required this.onCancel,
     required this.onViewRoute,
   });
 
@@ -425,28 +646,39 @@ class ChooseRouteSheet extends StatefulWidget {
 }
 
 class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
-  TransportMode _selectedMode = TransportMode.walking;
-  RouteType _selectedRoute = RouteType.comfortableShaded;
+  late TransportMode _selectedMode;
+  late RouteType _selectedRoute;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedMode = widget.initialTransportMode;
+    _selectedRoute = widget.initialRouteType;
+  }
 
   @override
   Widget build(BuildContext context) {
     final shortestDist = RouteMetricsHelper.getDistanceString(
+      widget.origin,
       widget.destination,
       RouteType.shortest,
       _selectedMode,
     );
     final shortestTime = RouteMetricsHelper.getTimeString(
+      widget.origin,
       widget.destination,
       RouteType.shortest,
       _selectedMode,
     );
 
     final comfortableDist = RouteMetricsHelper.getDistanceString(
+      widget.origin,
       widget.destination,
       RouteType.comfortableShaded,
       _selectedMode,
     );
     final comfortableTime = RouteMetricsHelper.getTimeString(
+      widget.origin,
       widget.destination,
       RouteType.comfortableShaded,
       _selectedMode,
@@ -496,7 +728,8 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
                     const SizedBox(width: 12),
                     _buildModeIcon(TransportMode.bicycle, Icons.pedal_bike),
                     const SizedBox(width: 12),
-                    _buildModeIcon(TransportMode.walking, Icons.directions_walk),
+                    _buildModeIcon(
+                        TransportMode.walking, Icons.directions_walk),
                   ],
                 ),
 
@@ -546,7 +779,7 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
-                                  widget.originName,
+                                  widget.origin.label,
                                   style: GoogleFonts.montserrat(
                                     fontSize: 13,
                                     fontStyle: FontStyle.italic,
@@ -616,6 +849,11 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
                           ),
                         ],
                       ),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: widget.onCancel,
+                      child: const Text('Cancel'),
                     ),
                   ],
                 ),
@@ -855,17 +1093,21 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
 // =========================================================================
 class RouteDetailsSheet extends StatelessWidget {
   final CampusBuilding destination;
+  final NavigationOrigin origin;
   final RouteType selectedRouteType;
   final TransportMode selectedTransportMode;
   final VoidCallback onBack;
+  final VoidCallback onCancel;
   final VoidCallback onStartNavigation;
 
   const RouteDetailsSheet({
     super.key,
     required this.destination,
+    required this.origin,
     required this.selectedRouteType,
     this.selectedTransportMode = TransportMode.walking,
     required this.onBack,
+    required this.onCancel,
     required this.onStartNavigation,
   });
 
@@ -876,16 +1118,19 @@ class RouteDetailsSheet extends StatelessWidget {
     final subtitle = isShortest ? 'Most Direct Path' : 'Shaded, Wider';
 
     final distance = RouteMetricsHelper.getDistanceString(
+      origin,
       destination,
       selectedRouteType,
       selectedTransportMode,
     );
     final estTime = RouteMetricsHelper.getTimeString(
+      origin,
       destination,
       selectedRouteType,
       selectedTransportMode,
     );
     final arrivalTime = RouteMetricsHelper.getArrivalTime(
+      origin,
       destination,
       selectedRouteType,
       selectedTransportMode,
@@ -966,7 +1211,7 @@ class RouteDetailsSheet extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'ISU MAIN GATE',
+                    origin.label.toUpperCase(),
                     style: GoogleFonts.montserrat(
                       fontSize: 8.5,
                       fontWeight: FontWeight.bold,
@@ -1113,6 +1358,20 @@ class RouteDetailsSheet extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: onCancel,
+              child: Text(
+                'Cancel Directions',
+                style: GoogleFonts.montserrat(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1124,6 +1383,7 @@ class RouteDetailsSheet extends StatelessWidget {
 // =========================================================================
 class ActiveNavigationHud extends StatelessWidget {
   final CampusBuilding destination;
+  final NavigationOrigin origin;
   final RouteType selectedRouteType;
   final TransportMode selectedTransportMode;
   final VoidCallback onEndRoute;
@@ -1132,6 +1392,7 @@ class ActiveNavigationHud extends StatelessWidget {
   const ActiveNavigationHud({
     super.key,
     required this.destination,
+    required this.origin,
     required this.selectedRouteType,
     required this.selectedTransportMode,
     required this.onEndRoute,
@@ -1142,14 +1403,20 @@ class ActiveNavigationHud extends StatelessWidget {
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
     final distance = RouteMetricsHelper.getDistanceString(
+      origin,
       destination,
       selectedRouteType,
       selectedTransportMode,
     );
     final time = RouteMetricsHelper.getTimeString(
+      origin,
       destination,
       selectedRouteType,
       selectedTransportMode,
+    );
+    final heading = RouteMetricsHelper.getHeadingInstruction(
+      origin,
+      destination,
     );
 
     return Stack(
@@ -1194,7 +1461,7 @@ class ActiveNavigationHud extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'Head Northeast',
+                        heading,
                         style: GoogleFonts.montserrat(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -1292,6 +1559,16 @@ class ActiveNavigationHud extends StatelessWidget {
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'From ${origin.label}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.montserrat(
+                              fontSize: 10.5,
+                              color: Colors.grey.shade400,
                             ),
                           ),
                         ],

@@ -23,6 +23,27 @@ enum TransportMode {
   walking,
 }
 
+enum NavigationOriginType {
+  currentLocation,
+  campusCenter,
+  mainGate,
+  campusLocation,
+}
+
+class NavigationOrigin {
+  final String id;
+  final String label;
+  final LatLng coordinate;
+  final NavigationOriginType type;
+
+  const NavigationOrigin({
+    required this.id,
+    required this.label,
+    required this.coordinate,
+    required this.type,
+  });
+}
+
 class CampusRoom {
   final String id;
   final String title;

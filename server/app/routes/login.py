@@ -1,5 +1,6 @@
 import random
 import re
+import threading
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException
@@ -17,6 +18,68 @@ router = APIRouter(
 
 password_hash = PasswordHash.recommended()
 
+MAX_LOGIN_ATTEMPTS = 6
+LOGIN_LOCKOUT_DURATION = timedelta(minutes=5)
+_login_attempts = {}
+_login_attempts_lock = threading.Lock()
+
+
+def _login_key(identifier: str) -> str:
+    return identifier.strip().casefold()
+
+
+def _remaining_lockout(identifier: str) -> int:
+    """Return remaining lockout seconds for an identifier, or 0 if unlocked."""
+    key = _login_key(identifier)
+    now = datetime.now(timezone.utc)
+    with _login_attempts_lock:
+        state = _login_attempts.get(key)
+        if not state or not state.get("locked_until"):
+            return 0
+        remaining = int((state["locked_until"] - now).total_seconds())
+        if remaining <= 0:
+            _login_attempts.pop(key, None)
+            return 0
+        return remaining + 1
+
+
+def _record_failed_login(identifier: str) -> tuple[int, int]:
+    """Record a failed attempt and return (attempt count, lockout seconds)."""
+    key = _login_key(identifier)
+    now = datetime.now(timezone.utc)
+    with _login_attempts_lock:
+        state = _login_attempts.setdefault(key, {"attempts": 0})
+        state["attempts"] += 1
+        if state["attempts"] >= MAX_LOGIN_ATTEMPTS:
+            state["locked_until"] = now + LOGIN_LOCKOUT_DURATION
+            return state["attempts"], int(LOGIN_LOCKOUT_DURATION.total_seconds())
+        return state["attempts"], 0
+
+
+def _clear_login_attempts(identifier: str) -> None:
+    with _login_attempts_lock:
+        _login_attempts.pop(_login_key(identifier), None)
+
+
+def _invalid_login(identifier: str):
+    attempts, lockout_seconds = _record_failed_login(identifier)
+    headers = {
+        "X-Login-Attempts": str(attempts),
+        "X-Login-Attempts-Remaining": str(max(MAX_LOGIN_ATTEMPTS - attempts, 0)),
+    }
+    if lockout_seconds:
+        headers["Retry-After"] = str(lockout_seconds)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed login attempts. Please try again in 5 minutes.",
+            headers=headers,
+        )
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid username/email or password.",
+        headers=headers,
+    )
+
 
 # ==========================================
 # LOGIN
@@ -31,6 +94,18 @@ class LoginRequest(BaseModel):
 def login(data: LoginRequest):
 
     identifier = data.identifier.strip()
+
+    remaining_lockout = _remaining_lockout(identifier)
+    if remaining_lockout:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed login attempts. Please try again in 5 minutes.",
+            headers={
+                "Retry-After": str(remaining_lockout),
+                "X-Login-Attempts": str(MAX_LOGIN_ATTEMPTS),
+                "X-Login-Attempts-Remaining": "0",
+            },
+        )
 
     # ======================================
     # LOGIN USING EMAIL
@@ -47,10 +122,7 @@ def login(data: LoginRequest):
         )
 
         if not result.data:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid username/email or password."
-            )
+            _invalid_login(identifier)
 
         user_info = result.data[0]
 
@@ -69,10 +141,7 @@ def login(data: LoginRequest):
         )
 
         if not user_result.data:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid username/email or password."
-            )
+            _invalid_login(identifier)
 
         user = user_result.data[0]
 
@@ -85,10 +154,7 @@ def login(data: LoginRequest):
         )
 
         if not user_info_result.data:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid username/email or password."
-            )
+            _invalid_login(identifier)
 
         user_info = user_info_result.data[0]
 
@@ -105,10 +171,7 @@ def login(data: LoginRequest):
         password_valid = False
 
     if not password_valid:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid username/email or password."
-        )
+        _invalid_login(identifier)
 
     # ======================================
     # GET USER
@@ -127,6 +190,8 @@ def login(data: LoginRequest):
             status_code=404,
             detail="User account not found."
         )
+
+    _clear_login_attempts(identifier)
 
     user = user_result.data[0]
 

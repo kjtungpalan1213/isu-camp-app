@@ -235,7 +235,8 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
                                     onNavigateToBuilding: (destination) {
                                       Navigator.pop(context);
                                       if (widget.onNavigateToBuilding != null) {
-                                        widget.onNavigateToBuilding!(destination);
+                                        widget
+                                            .onNavigateToBuilding!(destination);
                                       }
                                     },
                                   ),
@@ -607,7 +608,8 @@ class _OfflineMapSubScreenState extends State<_OfflineMapSubScreen> {
                                     Text(
                                       _status == DownloadStatus.completed
                                           ? '30 MB • Offline Ready'
-                                          : _status == DownloadStatus.downloading
+                                          : _status ==
+                                                  DownloadStatus.downloading
                                               ? '$downloadedMb MB / 30 MB • $percentage%'
                                               : _status == DownloadStatus.paused
                                                   ? '$downloadedMb MB / 30 MB • Paused'
@@ -790,8 +792,8 @@ class _OfflineMapSubScreenState extends State<_OfflineMapSubScreen> {
         );
       case DownloadStatus.completed:
         return IconButton(
-          icon: const Icon(Icons.delete_outline,
-              color: Colors.white60, size: 24),
+          icon:
+              const Icon(Icons.delete_outline, color: Colors.white60, size: 24),
           tooltip: 'Delete Offline Map',
           onPressed: _deleteDownload,
         );
@@ -870,26 +872,24 @@ class _HistorySubScreenState extends State<_HistorySubScreen> {
   @override
   void initState() {
     super.initState();
-    final caBuilding = isuCampusBuildings.firstWhere(
-      (b) => b.id == 'bldg_ca_sbo',
-      orElse: () => isuCampusBuildings[0],
-    );
-    final ictBuilding = isuCampusBuildings.firstWhere(
-      (b) => b.id == 'bldg_ccsict',
-      orElse: () => isuCampusBuildings[1],
-    );
-    final libBuilding = isuCampusBuildings.firstWhere(
-      (b) => b.id == 'bldg_library',
-      orElse: () => isuCampusBuildings[2],
-    );
-    final adminBuilding = isuCampusBuildings.firstWhere(
-      (b) => b.id == 'bldg_admin',
-      orElse: () => isuCampusBuildings[3],
-    );
-    final coeBuilding = isuCampusBuildings.firstWhere(
-      (b) => b.id == 'bldg_coe',
-      orElse: () => isuCampusBuildings[4],
-    );
+    if (isuCampusBuildings.isEmpty) {
+      _historyItems = [];
+      return;
+    }
+
+    CampusBuilding findBuilding(String id, int fallbackIndex) {
+      return isuCampusBuildings.firstWhere(
+        (building) => building.id == id,
+        orElse: () =>
+            isuCampusBuildings[fallbackIndex % isuCampusBuildings.length],
+      );
+    }
+
+    final caBuilding = findBuilding('bldg_ca_sbo', 0);
+    final ictBuilding = findBuilding('bldg_ccsict', 1);
+    final libBuilding = findBuilding('bldg_library', 2);
+    final adminBuilding = findBuilding('bldg_admin', 3);
+    final coeBuilding = findBuilding('bldg_coe', 4);
 
     _historyItems = [
       _HistoryEntry(

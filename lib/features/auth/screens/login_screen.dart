@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
@@ -21,15 +23,35 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
+  int _failedLoginAttempts = 0;
+  Timer? _lockoutTimer;
+  DateTime? _loginLockedUntil;
+
+  bool get _isLoginLocked =>
+      _loginLockedUntil != null && DateTime.now().isBefore(_loginLockedUntil!);
+
+  int get _remainingLockoutSeconds {
+    if (_loginLockedUntil == null) return 0;
+    return _loginLockedUntil!.difference(DateTime.now()).inSeconds + 1;
+  }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
+    _lockoutTimer?.cancel();
     super.dispose();
   }
 
 Future<void> _handleLogin() async {
+  if (_isLoginLocked) {
+    _showSnackBar(
+      'Too many failed attempts. Try again in ${_formatLockoutTime()}.',
+      Colors.orangeAccent.shade700,
+    );
+    return;
+  }
+
   final identifier = _usernameController.text.trim();
   final password = _passwordController.text.trim();
 
@@ -81,6 +103,14 @@ Future<void> _handleLogin() async {
 
     String message = error.toString();
 
+    if (error is LoginException && error.retryAfterSeconds != null) {
+      _startLockout(error.retryAfterSeconds!);
+    }
+
+    if (error is LoginException && error.failedAttempts != null) {
+      setState(() => _failedLoginAttempts = error.failedAttempts!);
+    }
+
     // Remove "Exception: " from displayed message
     message = message.replaceFirst('Exception: ', '');
 
@@ -89,6 +119,33 @@ Future<void> _handleLogin() async {
       Colors.redAccent,
     );
   }
+}
+
+void _startLockout(int seconds) {
+  _lockoutTimer?.cancel();
+  setState(() {
+    _loginLockedUntil = DateTime.now().add(Duration(seconds: seconds));
+  });
+  _lockoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    if (!mounted || !_isLoginLocked) {
+      timer.cancel();
+      if (mounted) {
+        setState(() {
+          _loginLockedUntil = null;
+          _failedLoginAttempts = 0;
+        });
+      }
+    } else {
+      setState(() {});
+    }
+  });
+}
+
+String _formatLockoutTime() {
+  final seconds = _remainingLockoutSeconds;
+  final minutes = seconds ~/ 60;
+  final remainingSeconds = seconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
 }
 
   void _showSnackBar(String message, Color color) {
@@ -974,14 +1031,16 @@ Future<void> _handleLogin() async {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _handleLogin,
+                          onPressed: _isLoginLocked ? null : _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF0F751B),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(6)),
                           ),
                           child: Text(
-                            'Log in',
+                            _isLoginLocked
+                                ? 'Try again in ${_formatLockoutTime()}'
+                                : 'Log in',
                             style: GoogleFonts.montserrat(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -989,6 +1048,27 @@ Future<void> _handleLogin() async {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      if (_isLoginLocked)
+                        Text(
+                          'Too many login attempts. Try again in ${_formatLockoutTime()}.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.montserrat(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else if (_failedLoginAttempts > 0)
+                        Text(
+                          'Login attempt $_failedLoginAttempts of 6',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.montserrat(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                     ],
                   ),
                 ),
