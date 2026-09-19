@@ -4,6 +4,29 @@ import 'package:latlong2/latlong.dart';
 import '../models/campus_models.dart';
 import '../services/campus_service.dart';
 
+IconData routeModeIcon(TransportMode mode) {
+  switch (mode) {
+    case TransportMode.car:
+      return Icons.directions_car;
+    case TransportMode.motorcycle:
+      return Icons.two_wheeler;
+    case TransportMode.bicycle:
+      return Icons.pedal_bike;
+    case TransportMode.walking:
+      return Icons.directions_walk;
+  }
+}
+
+IconData routeInstructionIcon(String instruction) {
+  final normalized = instruction.toLowerCase();
+  if (normalized.contains('left')) return Icons.turn_left;
+  if (normalized.contains('right')) return Icons.turn_right;
+  if (normalized.contains('arrive') || normalized.contains('destination')) {
+    return Icons.location_on;
+  }
+  return Icons.arrow_upward;
+}
+
 // Frontend-only route estimate. Replace this helper with backend route values.
 class RouteMetricsHelper {
   static int getBaseDistance(
@@ -454,11 +477,16 @@ class BuildingDetailsSheet extends StatelessWidget {
 // =========================================================================
 // 2. CHOOSE STARTING POINT
 // =========================================================================
-class ChooseStartingPointSheet extends StatelessWidget {
+class ChooseStartingPointSheet extends StatefulWidget {
   final CampusBuilding destination;
   final CampusRoom? destinationRoom;
   final List<NavigationOrigin> origins;
   final NavigationOrigin selectedOrigin;
+  final bool hasSelectedOrigin;
+  final bool isLocating;
+  final String? locationStatus;
+  final bool isCurrentLocationInsideCampus;
+  final Future<void> Function() onUseCurrentLocation;
   final ValueChanged<NavigationOrigin> onOriginSelected;
   final VoidCallback onBack;
   final VoidCallback onCancel;
@@ -470,30 +498,114 @@ class ChooseStartingPointSheet extends StatelessWidget {
     this.destinationRoom,
     required this.origins,
     required this.selectedOrigin,
+    required this.hasSelectedOrigin,
+    required this.isLocating,
+    required this.locationStatus,
+    required this.isCurrentLocationInsideCampus,
+    required this.onUseCurrentLocation,
     required this.onOriginSelected,
     required this.onBack,
     required this.onCancel,
     required this.onContinue,
   });
 
-  IconData _iconFor(NavigationOriginType type) {
-    switch (type) {
-      case NavigationOriginType.currentLocation:
-        return Icons.my_location;
-      case NavigationOriginType.campusCenter:
-        return Icons.center_focus_strong;
-      case NavigationOriginType.mainGate:
-        return Icons.door_front_door_outlined;
-      case NavigationOriginType.campusLocation:
-        return Icons.location_on_outlined;
-    }
+  @override
+  State<ChooseStartingPointSheet> createState() =>
+      _ChooseStartingPointSheetState();
+}
+
+class _ChooseStartingPointSheetState extends State<ChooseStartingPointSheet> {
+  bool _showBuildings = false;
+  bool _attemptedCurrentLocation = false;
+
+  List<NavigationOrigin> get _buildings => widget.origins
+      .where((origin) => origin.type == NavigationOriginType.campusLocation)
+      .toList();
+
+  Widget _optionTile({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool selected = false,
+    String? subtitle,
+    bool showError = false,
+    Widget? trailing,
+  }) {
+    return Material(
+      color: selected ? const Color(0xFFECFDF3) : const Color(0xFFF8FAF9),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: showError
+                  ? Colors.red.shade400
+                  : selected
+                      ? const Color(0xFF0F751B)
+                      : Colors.grey.shade200,
+              width: selected || showError ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color:
+                    showError ? Colors.red.shade600 : const Color(0xFF0F751B),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: GoogleFonts.montserrat(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: GoogleFonts.montserrat(
+                          fontSize: 10.5,
+                          color: showError
+                              ? Colors.red.shade700
+                              : Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              trailing ??
+                  Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: selected
+                        ? const Color(0xFF0F751B)
+                        : Colors.grey.shade400,
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.68,
+        maxHeight: MediaQuery.of(context).size.height * 0.72,
       ),
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
       decoration: const BoxDecoration(
@@ -525,13 +637,13 @@ class ChooseStartingPointSheet extends StatelessWidget {
           Row(
             children: [
               TextButton.icon(
-                onPressed: onBack,
+                onPressed: widget.onBack,
                 icon: const Icon(Icons.arrow_back, size: 18),
                 label: const Text('Back'),
               ),
               const Spacer(),
               TextButton(
-                onPressed: onCancel,
+                onPressed: widget.onCancel,
                 child: const Text('Cancel'),
               ),
             ],
@@ -546,77 +658,84 @@ class ChooseStartingPointSheet extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            destinationRoom == null
-                ? 'Going to ${destination.name}'
-                : 'Going to ${destinationRoom!.title} (${destinationRoom!.floor}) '
-                    'via ${destination.name} entrance',
+            widget.destinationRoom == null
+                ? 'Going to ${widget.destination.name}'
+                : 'Going to ${widget.destinationRoom!.title} '
+                    '(${widget.destinationRoom!.floor}) via '
+                    '${widget.destination.name} entrance',
             style: GoogleFonts.montserrat(
               fontSize: 12,
               color: Colors.grey.shade600,
             ),
           ),
           const SizedBox(height: 14),
-          Flexible(
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: origins.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final origin = origins[index];
-                final isSelected = selectedOrigin.id == origin.id;
-                return Material(
-                  color: isSelected
-                      ? const Color(0xFFECFDF3)
-                      : const Color(0xFFF8FAF9),
-                  borderRadius: BorderRadius.circular(14),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => onOriginSelected(origin),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: isSelected
-                              ? const Color(0xFF0F751B)
-                              : Colors.grey.shade200,
-                          width: isSelected ? 1.5 : 1,
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                _optionTile(
+                  icon: widget.isLocating ? Icons.gps_fixed : Icons.my_location,
+                  label: 'Use My Current Location',
+                  selected: widget.hasSelectedOrigin &&
+                      widget.selectedOrigin.type ==
+                          NavigationOriginType.currentLocation,
+                  showError: _attemptedCurrentLocation &&
+                      !widget.isLocating &&
+                      !widget.isCurrentLocationInsideCampus,
+                  subtitle: widget.isLocating
+                      ? 'Detecting your location...'
+                      : _attemptedCurrentLocation &&
+                              widget.locationStatus != null
+                          ? widget.locationStatus
+                          : 'Available only while you are inside ISU Echague.',
+                  onTap: () async {
+                    setState(() {
+                      _attemptedCurrentLocation = true;
+                      _showBuildings = false;
+                    });
+                    await widget.onUseCurrentLocation();
+                  },
+                ),
+                const SizedBox(height: 8),
+                _optionTile(
+                  icon: Icons.apartment,
+                  label: 'Others',
+                  subtitle: 'Choose another campus building.',
+                  onTap: () => setState(() => _showBuildings = !_showBuildings),
+                  trailing: Icon(
+                    _showBuildings ? Icons.expand_less : Icons.expand_more,
+                    color: const Color(0xFF0F751B),
+                  ),
+                ),
+                if (_showBuildings) ...[
+                  const SizedBox(height: 8),
+                  if (_buildings.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        'No other campus buildings are available.',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _iconFor(origin.type),
-                            color: const Color(0xFF0F751B),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              origin.label,
-                              style: GoogleFonts.montserrat(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            isSelected
-                                ? Icons.radio_button_checked
-                                : Icons.radio_button_off,
-                            color: isSelected
-                                ? const Color(0xFF0F751B)
-                                : Colors.grey.shade400,
-                          ),
-                        ],
+                    )
+                  else
+                    for (var index = 0; index < _buildings.length; index++) ...[
+                      if (index > 0) const SizedBox(height: 8),
+                      _optionTile(
+                        icon: Icons.location_on_outlined,
+                        label: _buildings[index].label,
+                        selected: widget.hasSelectedOrigin &&
+                            widget.selectedOrigin.id == _buildings[index].id,
+                        onTap: () {
+                          widget.onOriginSelected(_buildings[index]);
+                          setState(() => _showBuildings = false);
+                        },
                       ),
-                    ),
-                  ),
-                );
-              },
+                    ],
+                ],
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -624,7 +743,7 @@ class ChooseStartingPointSheet extends StatelessWidget {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: onContinue,
+              onPressed: widget.hasSelectedOrigin ? widget.onContinue : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0F5A28),
                 shape: RoundedRectangleBorder(
@@ -657,6 +776,7 @@ class ChooseRouteSheet extends StatefulWidget {
   final TransportMode initialTransportMode;
   final VoidCallback onBack;
   final VoidCallback onCancel;
+  final ValueChanged<TransportMode>? onTransportModeChanged;
   final Function(WalkingRoute route, TransportMode selectedMode) onViewRoute;
 
   const ChooseRouteSheet({
@@ -668,6 +788,7 @@ class ChooseRouteSheet extends StatefulWidget {
     this.initialTransportMode = TransportMode.walking,
     required this.onBack,
     required this.onCancel,
+    this.onTransportModeChanged,
     required this.onViewRoute,
   });
 
@@ -761,14 +882,13 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
                       ),
                     ),
                     const SizedBox(width: 14),
-                    _buildModeIcon(TransportMode.car, Icons.directions_car),
+                    _buildModeIcon(TransportMode.car),
                     const SizedBox(width: 12),
-                    _buildModeIcon(TransportMode.motorcycle, Icons.two_wheeler),
+                    _buildModeIcon(TransportMode.motorcycle),
                     const SizedBox(width: 12),
-                    _buildModeIcon(TransportMode.bicycle, Icons.pedal_bike),
+                    _buildModeIcon(TransportMode.bicycle),
                     const SizedBox(width: 12),
-                    _buildModeIcon(
-                        TransportMode.walking, Icons.directions_walk),
+                    _buildModeIcon(TransportMode.walking),
                   ],
                 ),
 
@@ -1000,10 +1120,13 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
     );
   }
 
-  Widget _buildModeIcon(TransportMode mode, IconData icon) {
+  Widget _buildModeIcon(TransportMode mode) {
     final isSelected = _selectedMode == mode;
     return GestureDetector(
-      onTap: () => setState(() => _selectedMode = mode),
+      onTap: () {
+        setState(() => _selectedMode = mode);
+        widget.onTransportModeChanged?.call(mode);
+      },
       child: Container(
         padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
@@ -1011,7 +1134,7 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
           borderRadius: BorderRadius.circular(6),
         ),
         child: Icon(
-          icon,
+          routeModeIcon(mode),
           color: isSelected ? Colors.white : Colors.white60,
           size: 20,
         ),
@@ -1170,6 +1293,7 @@ class RouteDetailsSheet extends StatelessWidget {
   final TransportMode selectedTransportMode;
   final VoidCallback onBack;
   final VoidCallback onCancel;
+  final VoidCallback onPreviewRoute;
   final VoidCallback onStartNavigation;
 
   const RouteDetailsSheet({
@@ -1182,6 +1306,7 @@ class RouteDetailsSheet extends StatelessWidget {
     this.selectedTransportMode = TransportMode.walking,
     required this.onBack,
     required this.onCancel,
+    required this.onPreviewRoute,
     required this.onStartNavigation,
   });
 
@@ -1212,190 +1337,403 @@ class RouteDetailsSheet extends StatelessWidget {
           ),
         ],
       ),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          GestureDetector(
-            onTap: onBack,
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.arrow_back,
-                  size: 18,
-                  color: Color(0xFF0F4D20),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Back',
-                  style: GoogleFonts.montserrat(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF0F4D20),
+      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      child: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: onBack,
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.arrow_back,
+                    size: 18,
+                    color: Color(0xFF0F4D20),
                   ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Back',
+                    style: GoogleFonts.montserrat(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF0F4D20),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            Text(
+              'ROUTE DETAILS',
+              style: GoogleFonts.montserrat(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.6,
+                color: const Color(0xFF0B351E),
+              ),
+            ),
+
+            if (destinationRoom != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${destinationRoom!.title} • ${destinationRoom!.floor}. '
+                'Walking route ends at ${destination.name} entrance.',
+                style: GoogleFonts.montserrat(
+                  fontSize: 11,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+
+            // Origin to Destination Timeline
+            Row(
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFF22C55E),
+                          width: 4,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      origin.label.toUpperCase(),
+                      style: GoogleFonts.montserrat(
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: Container(
+                    height: 2,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    color: Colors.grey.shade400,
+                  ),
+                ),
+                Column(
+                  children: [
+                    const Icon(
+                      Icons.location_on,
+                      color: Colors.grey,
+                      size: 20,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      destination.acronym.toUpperCase(),
+                      style: GoogleFonts.montserrat(
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ),
 
-          const SizedBox(height: 10),
+            const SizedBox(height: 18),
 
-          Text(
-            'ROUTE DETAILS',
-            style: GoogleFonts.montserrat(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.6,
-              color: const Color(0xFF0B351E),
-            ),
-          ),
-
-          if (destinationRoom != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              '${destinationRoom!.title} • ${destinationRoom!.floor}. '
-              'Walking route ends at ${destination.name} entrance.',
-              style: GoogleFonts.montserrat(
-                fontSize: 11,
-                color: Colors.grey.shade700,
+            // Selected Route Info Card
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF9FAFB),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade200),
               ),
-            ),
-          ],
-          const SizedBox(height: 16),
-
-          // Origin to Destination Timeline
-          Row(
-            children: [
-              Column(
+              child: Row(
                 children: [
                   Container(
-                    width: 18,
-                    height: 18,
+                    width: 48,
+                    height: 48,
                     decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: const Color(0xFF22C55E),
-                        width: 4,
-                      ),
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: Icon(icon, color: iconColor, size: 28),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: GoogleFonts.montserrat(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        Text(
+                          subtitle,
+                          style: GoogleFonts.montserrat(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Distance: $distance',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    origin.label.toUpperCase(),
-                    style: GoogleFonts.montserrat(
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-              Expanded(
-                child: Container(
-                  height: 2,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  color: Colors.grey.shade400,
-                ),
-              ),
-              Column(
-                children: [
-                  const Icon(
-                    Icons.location_on,
-                    color: Colors.grey,
-                    size: 20,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    destination.acronym.toUpperCase(),
-                    style: GoogleFonts.montserrat(
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 18),
-
-          // Selected Route Info Card
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF9FAFB),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.04),
-                        blurRadius: 6,
-                      ),
-                    ],
-                  ),
-                  child: Icon(icon, color: iconColor, size: 28),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        title,
-                        style: GoogleFonts.montserrat(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      Text(
-                        subtitle,
-                        style: GoogleFonts.montserrat(
-                          fontSize: 11,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Distance: $distance',
+                        'Est: $estTime',
                         style: GoogleFonts.montserrat(
                           fontSize: 11.5,
                           fontWeight: FontWeight.bold,
                           color: Colors.black87,
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Time of\nArrival: $arrivalTime',
+                        textAlign: TextAlign.right,
+                        style: GoogleFonts.montserrat(
+                          fontSize: 10.5,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
                     ],
                   ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Est: $estTime',
-                      style: GoogleFonts.montserrat(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 22),
+
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: onPreviewRoute,
+                      icon: const Icon(Icons.route),
+                      label: const Text('Preview'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF0F5A28),
+                        side: const BorderSide(color: Color(0xFF0F5A28)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 4),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SizedBox(
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: onStartNavigation,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F5A28),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 2,
+                      ),
+                      child: Text(
+                        'Start',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: onCancel,
+                child: Text(
+                  'Cancel Directions',
+                  style: GoogleFonts.montserrat(
+                    color: Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =========================================================================
+// 4. STEP-BY-STEP ROUTE PREVIEW
+// =========================================================================
+class RoutePreviewHud extends StatelessWidget {
+  final WalkingRoute route;
+  final RouteType selectedRouteType;
+  final WalkingRouteStep step;
+  final int currentStepIndex;
+  final int totalSteps;
+  final VoidCallback onBack;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+
+  const RoutePreviewHud({
+    super.key,
+    required this.route,
+    required this.selectedRouteType,
+    required this.step,
+    required this.currentStepIndex,
+    required this.totalSteps,
+    required this.onBack,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final topPadding = MediaQuery.of(context).padding.top;
+    final isArrival = onNext == null;
+    final routeTypeLabel = selectedRouteType == RouteType.shortest
+        ? 'Shortest Route'
+        : 'Comfortable Path';
+    final routeSubtitle = selectedRouteType == RouteType.shortest
+        ? 'Most Direct Path'
+        : 'Prefers shaded pathways';
+    final routeIcon = selectedRouteType == RouteType.shortest
+        ? Icons.bolt
+        : Icons.cloud_outlined;
+    final routeIconColor = selectedRouteType == RouteType.shortest
+        ? const Color(0xFFECC700)
+        : const Color(0xFF0F751B);
+
+    return Stack(
+      children: [
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            padding: EdgeInsets.fromLTRB(12, topPadding + 6, 16, 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.98),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 12,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Back to route details',
+                      onPressed: onBack,
+                      icon: const Icon(
+                        Icons.arrow_back,
+                        color: Color(0xFF0B351E),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Route Preview',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF0B351E),
+                        ),
+                      ),
+                    ),
                     Text(
-                      'Time of\nArrival: $arrivalTime',
-                      textAlign: TextAlign.right,
+                      '${currentStepIndex + 1}/$totalSteps',
                       style: GoogleFonts.montserrat(
-                        fontSize: 10.5,
-                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF0F751B),
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(color: Color(0xFFDDE7E0), height: 18),
+                Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEAF7EE),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        routeInstructionIcon(step.instruction),
+                        color: const Color(0xFF0F751B),
+                        size: 30,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            step.instruction,
+                            style: GoogleFonts.montserrat(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF0B351E),
+                            ),
+                          ),
+                          if (step.distanceMeters > 0) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              step.distance,
+                              style: GoogleFonts.montserrat(
+                                fontSize: 13,
+                                color: const Color(0xFF52705E),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -1403,54 +1741,163 @@ class RouteDetailsSheet extends StatelessWidget {
               ],
             ),
           ),
-
-          const SizedBox(height: 22),
-
-          // "Start Navigation" Button
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: onStartNavigation,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0F5A28),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+        ),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 20,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(18, 15, 18, 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.98),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFDDE7E0)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 14,
+                  offset: Offset(0, 5),
                 ),
-                elevation: 2,
-              ),
-              child: Text(
-                'Start Navigation',
-                style: GoogleFonts.montserrat(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(13),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              blurRadius: 7,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          routeIcon,
+                          color: routeIconColor,
+                          size: 30,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              routeTypeLabel,
+                              style: GoogleFonts.montserrat(
+                                color: const Color(0xFF1F1F1F),
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              routeSubtitle,
+                              style: GoogleFonts.montserrat(
+                                color: Colors.grey.shade600,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Distance: ${route.distance}',
+                              style: GoogleFonts.montserrat(
+                                color: const Color(0xFF1F1F1F),
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Est: ${route.time}',
+                            style: GoogleFonts.montserrat(
+                              color: const Color(0xFF1F1F1F),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Time of\nArrival: ${route.arrivalTime}',
+                            textAlign: TextAlign.right,
+                            style: GoogleFonts.montserrat(
+                              color: Colors.grey.shade600,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+                const Divider(color: Color(0xFFDDE7E0), height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton.filled(
+                      tooltip: 'Previous step',
+                      onPressed: onPrevious,
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFFEAF7EE),
+                        disabledBackgroundColor: const Color(0xFFF0F3F1),
+                      ),
+                      icon: const Icon(Icons.chevron_left),
+                      color: const Color(0xFF0F751B),
+                      disabledColor: Colors.grey.shade400,
+                    ),
+                    Text(
+                      isArrival
+                          ? 'Destination reached'
+                          : 'Step ${currentStepIndex + 1} of $totalSteps',
+                      style: GoogleFonts.montserrat(
+                        color: const Color(0xFF0B351E),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    IconButton.filled(
+                      tooltip: 'Next step',
+                      onPressed: onNext,
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F751B),
+                        disabledBackgroundColor: const Color(0xFFF0F3F1),
+                      ),
+                      icon: const Icon(Icons.chevron_right),
+                      color: Colors.white,
+                      disabledColor: Colors.grey.shade400,
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: onCancel,
-              child: Text(
-                'Cancel Directions',
-                style: GoogleFonts.montserrat(
-                  color: Colors.redAccent,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
 // =========================================================================
-// 4. ACTIVE TURN-BY-TURN NAVIGATION HUD (Design Mockup Image 2)
+// 5. ACTIVE TURN-BY-TURN NAVIGATION HUD (Design Mockup Image 2)
 // =========================================================================
 class ActiveNavigationHud extends StatelessWidget {
   final CampusBuilding destination;

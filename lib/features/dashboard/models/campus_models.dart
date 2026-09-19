@@ -19,13 +19,44 @@ enum RouteType {
   comfortableShaded,
 }
 
+class WalkingRouteStep {
+  final String instruction;
+  final double distanceMeters;
+  final LatLng? coordinate;
+
+  const WalkingRouteStep({
+    required this.instruction,
+    required this.distanceMeters,
+    required this.coordinate,
+  });
+
+  factory WalkingRouteStep.fromJson(Map<String, dynamic> json) {
+    final rawCoordinate = json['coordinate'];
+    LatLng? coordinate;
+    if (rawCoordinate is List && rawCoordinate.length >= 2) {
+      coordinate = LatLng(
+        (rawCoordinate[0] as num).toDouble(),
+        (rawCoordinate[1] as num).toDouble(),
+      );
+    }
+
+    return WalkingRouteStep(
+      instruction: json['instruction'] as String? ?? 'Follow the route',
+      distanceMeters: (json['distanceMeters'] as num?)?.toDouble() ?? 0,
+      coordinate: coordinate,
+    );
+  }
+
+  String get distance => '${distanceMeters.round()} m';
+}
+
 class WalkingRoute {
   final RouteType type;
   final double distanceMeters;
   final double estimatedMinutes;
   final List<LatLng> points;
   final String startNodeName;
-  final List<String> instructions;
+  final List<WalkingRouteStep> steps;
 
   WalkingRoute.fromJson(Map<String, dynamic> json)
       : type = RouteType.values.byName(json['type'] as String),
@@ -36,9 +67,14 @@ class WalkingRoute {
             .map((p) =>
                 LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()))
             .toList(),
-        instructions = (json['steps'] as List)
-            .map((s) => s['instruction'] as String)
+        steps = ((json['steps'] as List?) ?? const [])
+            .map((step) => WalkingRouteStep.fromJson(
+                  Map<String, dynamic>.from(step as Map),
+                ))
             .toList();
+
+  List<String> get instructions =>
+      steps.map((step) => step.instruction).toList(growable: false);
 
   String get distance => '${distanceMeters.round()} m';
   String get time => '${estimatedMinutes.ceil()} min';
