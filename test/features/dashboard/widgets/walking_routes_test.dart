@@ -35,6 +35,7 @@ void main() {
   testWidgets('uses backend metrics and returns selected shaded route',
       (tester) async {
     WalkingRoute? selected;
+    TransportMode? changedMode;
     await http.runWithClient(() async {
       await tester.binding.setSurfaceSize(const Size(800, 1200));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -45,6 +46,7 @@ void main() {
         origin: origin,
         onBack: () {},
         onCancel: () {},
+        onTransportModeChanged: (mode) => changedMode = mode,
         onViewRoute: (route, mode) {
           selected = route;
         },
@@ -58,6 +60,7 @@ void main() {
       expect(selected?.distanceMeters, 150);
       await tester.tap(find.byIcon(Icons.directions_car));
       await tester.pump();
+      expect(changedMode, TransportMode.car);
       expect(find.text('Routing is currently available for Walking only.'),
           findsOneWidget);
       expect(

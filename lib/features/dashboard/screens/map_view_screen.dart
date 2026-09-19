@@ -6,9 +6,12 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../auth/services/user_session.dart';
 import '../data/campus_dataset.dart';
 import '../models/campus_models.dart';
+import '../models/navigation_history.dart';
 import '../services/campus_service.dart';
+import '../services/navigation_history_service.dart';
 import '../widgets/navigation_sheets.dart';
 import 'user_info_screen.dart';
 
@@ -30,6 +33,7 @@ enum NavigationUiState {
   chooseStartingPoint,
   chooseRoute,
   routeDetails,
+  routePreview,
   navigating,
   arrived,
 }
@@ -61,35 +65,27 @@ class _MapViewScreenState extends State<MapViewScreen> {
   LatLng? _currentUserLocation;
   String? _locationStatus;
   bool _isLocating = false;
+  bool _hasSelectedOrigin = false;
   bool _isLoadingBuildings = true;
   String? _buildingsError;
   StreamSubscription<Position>? _positionSubscription;
+  int _previewStepIndex = 0;
+  String? _historySessionId;
+  Future<void> _historyWriteQueue = Future<void>.value();
 
   bool get _isNavigationActive =>
+      _navigationState == NavigationUiState.routePreview ||
       _navigationState == NavigationUiState.navigating ||
       _navigationState == NavigationUiState.arrived;
 
   List<NavigationOrigin> get _availableOrigins => [
-        if (_currentUserLocation != null &&
-            isuEchagueBounds.contains(_currentUserLocation!))
+        if (_currentUserLocation != null)
           NavigationOrigin(
             id: 'current_location',
             label: 'My Current Location',
             coordinate: _currentUserLocation!,
             type: NavigationOriginType.currentLocation,
           ),
-        const NavigationOrigin(
-          id: 'campus_center',
-          label: 'ISU Echague Campus Center',
-          coordinate: isuCampusCenter,
-          type: NavigationOriginType.campusCenter,
-        ),
-        const NavigationOrigin(
-          id: 'main_gate',
-          label: 'ISU Main Gate',
-          coordinate: isuMainGateNode,
-          type: NavigationOriginType.mainGate,
-        ),
         ...isuCampusBuildings
             .where((building) => building.id != _selectedBuilding?.id)
             .map(
@@ -103,6 +99,112 @@ class _MapViewScreenState extends State<MapViewScreen> {
       ];
 
   List<LatLng> get _routePoints => _walkingRoute?.points ?? const [];
+
+  bool get _showsTransportOriginMarker =>
+      _navigationState == NavigationUiState.chooseRoute ||
+      _navigationState == NavigationUiState.routeDetails ||
+      _navigationState == NavigationUiState.routePreview ||
+      _navigationState == NavigationUiState.navigating;
+
+  List<WalkingRouteStep> get _routePreviewSteps {
+    final route = _walkingRoute;
+    final destination = _selectedBuilding;
+    if (route == null || destination == null || route.points.isEmpty) {
+      return const [];
+    }
+
+    final previewSteps = <WalkingRouteStep>[];
+    if (route.steps.isEmpty) {
+      previewSteps.add(
+        WalkingRouteStep(
+          instruction: RouteMetricsHelper.getHeadingInstruction(
+              _selectedOrigin, destination),
+          distanceMeters: 0,
+          coordinate: route.points.first,
+        ),
+      );
+      if (route.points.length > 2) {
+        previewSteps.add(
+          WalkingRouteStep(
+            instruction: 'Continue along the highlighted campus path',
+            distanceMeters: route.distanceMeters,
+            coordinate: route.points[route.points.length ~/ 2],
+          ),
+        );
+      }
+    } else {
+      for (var index = 0; index < route.steps.length; index++) {
+        final step = route.steps[index];
+        final fallbackPointIndex = route.steps.length == 1
+            ? 0
+            : ((index / (route.steps.length - 1)) * (route.points.length - 1))
+                .round();
+        previewSteps.add(
+          WalkingRouteStep(
+            instruction: step.instruction,
+            distanceMeters: step.distanceMeters,
+            coordinate: step.coordinate ?? route.points[fallbackPointIndex],
+          ),
+        );
+      }
+    }
+
+    previewSteps.add(
+      WalkingRouteStep(
+        instruction: 'Arrive at ${destination.name} entrance',
+        distanceMeters: 0,
+        coordinate: route.points.last,
+      ),
+    );
+    return previewSteps;
+  }
+
+  WalkingRouteStep? get _currentPreviewStep {
+    final steps = _routePreviewSteps;
+    if (steps.isEmpty) return null;
+    final index =
+        _previewStepIndex < steps.length ? _previewStepIndex : steps.length - 1;
+    return steps[index];
+  }
+
+  LatLng? get _routeEtaLabelPoint {
+    final points = _walkingRoute?.points;
+    if (points == null || points.isEmpty) return null;
+    final index = ((points.length - 1) * 0.78).round();
+    return points[index];
+  }
+
+  Widget _buildTransportOriginMarker() {
+    final isWalking = _selectedTransportMode == TransportMode.walking;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: const Color(0xFF22C55E),
+          width: 3,
+        ),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 6),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: isWalking
+          ? Container(
+              width: 12,
+              height: 12,
+              decoration: const BoxDecoration(
+                color: Color(0xFF0F751B),
+                shape: BoxShape.circle,
+              ),
+            )
+          : Icon(
+              routeModeIcon(_selectedTransportMode),
+              color: const Color(0xFF0F751B),
+              size: 22,
+            ),
+    );
+  }
 
   @override
   void initState() {
@@ -214,6 +316,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
           coordinate: _currentUserLocation!,
           type: NavigationOriginType.currentLocation,
         );
+        _hasSelectedOrigin = isuEchagueBounds.contains(_currentUserLocation!);
       }
     });
 
@@ -223,6 +326,31 @@ class _MapViewScreenState extends State<MapViewScreen> {
         if (mounted) _mapController.move(_currentUserLocation!, 18.5);
       });
     }
+  }
+
+  Future<void> _useCurrentLocationAsOrigin() async {
+    if (_currentUserLocation == null ||
+        !isuEchagueBounds.contains(_currentUserLocation!)) {
+      await _initializeCurrentLocation();
+    }
+    if (!mounted) return;
+
+    final location = _currentUserLocation;
+    if (location == null || !isuEchagueBounds.contains(location)) {
+      setState(() => _hasSelectedOrigin = false);
+      return;
+    }
+
+    setState(() {
+      _selectedOrigin = NavigationOrigin(
+        id: 'current_location',
+        label: 'My Current Location',
+        coordinate: location,
+        type: NavigationOriginType.currentLocation,
+      );
+      _hasSelectedOrigin = true;
+      _locationStatus = null;
+    });
   }
 
   void _cancelDirections() {
@@ -236,13 +364,81 @@ class _MapViewScreenState extends State<MapViewScreen> {
     });
   }
 
+  void _recordHistory(NavigationHistoryStatus status) {
+    final destination = _selectedBuilding;
+    final route = _walkingRoute;
+    if (destination == null || route == null) return;
+
+    final now = DateTime.now();
+    final sessionId =
+        _historySessionId ?? '${now.microsecondsSinceEpoch}_${destination.id}';
+    _historySessionId = sessionId;
+    final entry = NavigationHistoryEntry(
+      id: sessionId,
+      destinationId: destination.id,
+      destinationName: destination.name,
+      destinationAcronym: destination.acronym,
+      roomId: _selectedRoom?.id,
+      roomName: _selectedRoom?.title,
+      originLabel: _selectedOrigin.label,
+      routeType: _selectedRouteType,
+      transportMode: _selectedTransportMode,
+      distanceMeters: route.distanceMeters,
+      estimatedMinutes: route.estimatedMinutes,
+      status: status,
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    _historyWriteQueue = _historyWriteQueue
+        .then((_) => NavigationHistoryService.upsert(
+              UserSession.currentUsername,
+              entry,
+            ))
+        .catchError((_) {});
+  }
+
   void _startNavigation() {
     FocusScope.of(context).unfocus();
+    _recordHistory(NavigationHistoryStatus.navigationStarted);
     setState(() => _navigationState = NavigationUiState.navigating);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted)
         _mapController.move(
             _walkingRoute?.points.first ?? _selectedOrigin.coordinate, 18.5);
+    });
+  }
+
+  void _openRoutePreview() {
+    final steps = _routePreviewSteps;
+    if (steps.isEmpty) return;
+    _recordHistory(NavigationHistoryStatus.previewed);
+    setState(() {
+      _previewStepIndex = 0;
+      _navigationState = NavigationUiState.routePreview;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final coordinate = _currentPreviewStep?.coordinate;
+      if (mounted && coordinate != null) {
+        _mapController.move(coordinate, 18.5);
+      }
+    });
+  }
+
+  void _showPreviewStep(int requestedIndex) {
+    final steps = _routePreviewSteps;
+    if (steps.isEmpty) return;
+    final index = requestedIndex < 0
+        ? 0
+        : requestedIndex >= steps.length
+            ? steps.length - 1
+            : requestedIndex;
+    setState(() => _previewStepIndex = index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final coordinate = _currentPreviewStep?.coordinate;
+      if (mounted && coordinate != null) {
+        _mapController.move(coordinate, 18.5);
+      }
     });
   }
 
@@ -264,7 +460,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
         ],
       ),
     );
-    if (shouldEnd == true && mounted) _cancelDirections();
+    if (shouldEnd == true && mounted) {
+      _recordHistory(NavigationHistoryStatus.endedEarly);
+      _cancelDirections();
+    }
   }
 
   List<CampusBuilding> _getFilteredBuildings() {
@@ -295,6 +494,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       _selectedBuilding = building;
       _selectedRoom = null;
       _walkingRoute = null;
+      _historySessionId = null;
       _navigationState = NavigationUiState.buildingDetails;
     });
     _mapController.move(building.coordinate, 17.5);
@@ -400,6 +600,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 // Active Route Polylines (if route chosen or navigating)
                 if (_walkingRoute != null &&
                     (_navigationState == NavigationUiState.routeDetails ||
+                        _navigationState == NavigationUiState.routePreview ||
                         _navigationState == NavigationUiState.navigating))
                   PolylineLayer(
                     polylines: [
@@ -504,39 +705,105 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   }).toList(),
                 ),
 
-                if (_walkingRoute != null &&
-                    (_navigationState == NavigationUiState.routeDetails ||
-                        _navigationState == NavigationUiState.navigating))
+                if (_showsTransportOriginMarker)
                   MarkerLayer(
                     markers: [
                       Marker(
                         point: _walkingRoute?.points.first ??
                             _selectedOrigin.coordinate,
-                        width: 38,
-                        height: 38,
+                        width: 42,
+                        height: 42,
+                        child: _buildTransportOriginMarker(),
+                      ),
+                    ],
+                  ),
+
+                if (_navigationState == NavigationUiState.routePreview &&
+                    _currentPreviewStep?.coordinate != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _currentPreviewStep!.coordinate!,
+                        width: 46,
+                        height: 46,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: const Color(0xFF1D4ED8),
                             shape: BoxShape.circle,
-                            border: Border.all(
-                              color: const Color(0xFF22C55E),
-                              width: 4,
-                            ),
+                            border: Border.all(color: Colors.white, width: 3),
                             boxShadow: const [
-                              BoxShadow(color: Colors.black26, blurRadius: 6),
+                              BoxShadow(color: Colors.black38, blurRadius: 8),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.trip_origin,
-                            color: Color(0xFF0F751B),
-                            size: 18,
+                          child: Icon(
+                            routeInstructionIcon(
+                              _currentPreviewStep!.instruction,
+                            ),
+                            color: Colors.white,
+                            size: 24,
                           ),
                         ),
                       ),
                     ],
                   ),
 
-                if (_currentUserLocation != null)
+                if (_navigationState == NavigationUiState.routePreview &&
+                    _routeEtaLabelPoint != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _routeEtaLabelPoint!,
+                        width: 76,
+                        // Space for both the ETA pill and its map pointer.
+                        // A 48px marker clipped this Column by about 3px.
+                        height: 56,
+                        alignment: Alignment.topCenter,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0F751B),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 2,
+                                ),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black26,
+                                    blurRadius: 6,
+                                  ),
+                                ],
+                              ),
+                              child: Text(
+                                _walkingRoute!.time,
+                                style: GoogleFonts.montserrat(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_drop_down,
+                              color: Color(0xFF0F751B),
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                if (_currentUserLocation != null &&
+                    !(_showsTransportOriginMarker &&
+                        _selectedOrigin.type ==
+                            NavigationOriginType.currentLocation))
                   MarkerLayer(
                     markers: [
                       Marker(
@@ -768,6 +1035,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                         _selectBuildingAndShowDetails(
                                             destination);
                                         setState(() {
+                                          _hasSelectedOrigin = false;
                                           _navigationState = NavigationUiState
                                               .chooseStartingPoint;
                                         });
@@ -1069,6 +1337,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 onDirectionsTap: () {
                   setState(() {
                     _selectedRoom = null;
+                    _hasSelectedOrigin = false;
                     _navigationState = NavigationUiState.chooseStartingPoint;
                   });
                 },
@@ -1076,6 +1345,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   setState(() {
                     _selectedRoom = room;
                     _walkingRoute = null;
+                    _hasSelectedOrigin = false;
                     _navigationState = NavigationUiState.chooseStartingPoint;
                   });
                 },
@@ -1093,8 +1363,17 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 destinationRoom: _selectedRoom,
                 origins: _availableOrigins,
                 selectedOrigin: _selectedOrigin,
+                hasSelectedOrigin: _hasSelectedOrigin,
+                isLocating: _isLocating,
+                locationStatus: _locationStatus,
+                isCurrentLocationInsideCampus: _currentUserLocation != null &&
+                    isuEchagueBounds.contains(_currentUserLocation!),
+                onUseCurrentLocation: _useCurrentLocationAsOrigin,
                 onOriginSelected: (origin) {
-                  setState(() => _selectedOrigin = origin);
+                  setState(() {
+                    _selectedOrigin = origin;
+                    _hasSelectedOrigin = true;
+                  });
                 },
                 onBack: () {
                   setState(() {
@@ -1123,6 +1402,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 origin: _selectedOrigin,
                 initialRouteType: _selectedRouteType,
                 initialTransportMode: _selectedTransportMode,
+                onTransportModeChanged: (mode) {
+                  setState(() => _selectedTransportMode = mode);
+                },
                 onBack: () {
                   setState(() {
                     _navigationState = NavigationUiState.chooseStartingPoint;
@@ -1159,7 +1441,33 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   });
                 },
                 onCancel: _cancelDirections,
+                onPreviewRoute: _openRoutePreview,
                 onStartNavigation: _startNavigation,
+              ),
+            ),
+
+          if (_selectedBuilding != null &&
+              _walkingRoute != null &&
+              _navigationState == NavigationUiState.routePreview &&
+              _currentPreviewStep != null)
+            Positioned.fill(
+              child: RoutePreviewHud(
+                route: _walkingRoute!,
+                selectedRouteType: _selectedRouteType,
+                step: _currentPreviewStep!,
+                currentStepIndex: _previewStepIndex,
+                totalSteps: _routePreviewSteps.length,
+                onBack: () {
+                  setState(() {
+                    _navigationState = NavigationUiState.routeDetails;
+                  });
+                },
+                onPrevious: _previewStepIndex > 0
+                    ? () => _showPreviewStep(_previewStepIndex - 1)
+                    : null,
+                onNext: _previewStepIndex < _routePreviewSteps.length - 1
+                    ? () => _showPreviewStep(_previewStepIndex + 1)
+                    : null,
               ),
             ),
 
@@ -1176,6 +1484,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 selectedTransportMode: _selectedTransportMode,
                 onEndRoute: _confirmEndNavigation,
                 onSimulateArrival: () {
+                  _recordHistory(NavigationHistoryStatus.completed);
                   setState(() {
                     _navigationState = NavigationUiState.arrived;
                   });
