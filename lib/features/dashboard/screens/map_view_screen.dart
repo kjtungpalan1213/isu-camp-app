@@ -481,8 +481,6 @@ class _MapViewScreenState extends State<MapViewScreen> {
         return !b.isParking;
       } else if (_selectedCategoryFilter == 'Parkings') {
         return b.isParking;
-      } else if (_selectedCategoryFilter == 'Shaded') {
-        return b.hasShadedPath;
       }
 
       return true;
@@ -1149,7 +1147,6 @@ class _MapViewScreenState extends State<MapViewScreen> {
                           _buildFilterChip('All', Icons.grid_view),
                           _buildFilterChip('Colleges', Icons.school),
                           _buildFilterChip('Parkings', Icons.local_parking),
-                          _buildFilterChip('Shaded', Icons.park_outlined),
                         ],
                       ),
                     ),
