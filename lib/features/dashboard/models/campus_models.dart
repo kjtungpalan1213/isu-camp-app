@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
 enum RoomCategory {
+  room,
   laboratory,
+  office,
+  restroom,
   administrative,
   faculty,
   classroom,
@@ -14,6 +17,36 @@ enum RoomCategory {
 enum RouteType {
   shortest,
   comfortableShaded,
+}
+
+class WalkingRoute {
+  final RouteType type;
+  final double distanceMeters;
+  final double estimatedMinutes;
+  final List<LatLng> points;
+  final String startNodeName;
+  final List<String> instructions;
+
+  WalkingRoute.fromJson(Map<String, dynamic> json)
+      : type = RouteType.values.byName(json['type'] as String),
+        distanceMeters = (json['distanceMeters'] as num).toDouble(),
+        estimatedMinutes = (json['estimatedMinutes'] as num).toDouble(),
+        startNodeName = json['startNodeName'] as String,
+        points = (json['pathPoints'] as List)
+            .map((p) =>
+                LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()))
+            .toList(),
+        instructions = (json['steps'] as List)
+            .map((s) => s['instruction'] as String)
+            .toList();
+
+  String get distance => '${distanceMeters.round()} m';
+  String get time => '${estimatedMinutes.ceil()} min';
+  String get arrivalTime {
+    final arrival =
+        DateTime.now().add(Duration(seconds: (estimatedMinutes * 60).round()));
+    return '${arrival.hour.toString().padLeft(2, '0')}:${arrival.minute.toString().padLeft(2, '0')}';
+  }
 }
 
 enum TransportMode {
@@ -140,6 +173,7 @@ class CampusBuilding {
   final bool hasShadedPath;
   final List<CampusRoom> rooms;
   final List<CampusRoute> routes;
+  final List<LatLng> polygonCoordinates;
 
   const CampusBuilding({
     required this.id,
@@ -153,6 +187,7 @@ class CampusBuilding {
     this.hasShadedPath = false,
     this.rooms = const [],
     this.routes = const [],
+    this.polygonCoordinates = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -168,6 +203,9 @@ class CampusBuilding {
         'hasShadedPath': hasShadedPath,
         'rooms': rooms.map((r) => r.toJson()).toList(),
         'routes': routes.map((r) => r.toJson()).toList(),
+        'polygonCoordinates': polygonCoordinates
+            .map((point) => [point.latitude, point.longitude])
+            .toList(),
       };
 
   factory CampusBuilding.fromJson(Map<String, dynamic> json) => CampusBuilding(
@@ -183,6 +221,10 @@ class CampusBuilding {
         imageUrl: json['imageUrl'],
         isParking: json['isParking'] ?? false,
         hasShadedPath: json['hasShadedPath'] ?? false,
+        polygonCoordinates: (json['polygonCoordinates'] as List<dynamic>? ?? [])
+            .map((point) => LatLng(
+                (point[0] as num).toDouble(), (point[1] as num).toDouble()))
+            .toList(),
         rooms: (json['rooms'] as List<dynamic>?)
                 ?.map((r) => CampusRoom.fromJson(r))
                 .toList() ??

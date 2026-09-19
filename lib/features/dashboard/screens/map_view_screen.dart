@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../data/campus_dataset.dart';
 import '../models/campus_models.dart';
+import '../services/campus_service.dart';
 import '../widgets/navigation_sheets.dart';
 import 'user_info_screen.dart';
 
@@ -46,6 +47,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   NavigationUiState _navigationState = NavigationUiState.idle;
   CampusBuilding? _selectedBuilding;
+  CampusRoom? _selectedRoom;
+  WalkingRoute? _walkingRoute;
   NavigationOrigin _selectedOrigin = const NavigationOrigin(
     id: 'main_gate',
     label: 'ISU Main Gate',
@@ -58,6 +61,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
   LatLng? _currentUserLocation;
   String? _locationStatus;
   bool _isLocating = false;
+  bool _isLoadingBuildings = true;
+  String? _buildingsError;
   StreamSubscription<Position>? _positionSubscription;
 
   bool get _isNavigationActive =>
@@ -97,31 +102,46 @@ class _MapViewScreenState extends State<MapViewScreen> {
             ),
       ];
 
-  List<LatLng> get _mockRoutePoints {
-    final destination = _selectedBuilding;
-    if (destination == null) return const [];
-
-    final start = _selectedOrigin.coordinate;
-    final end = destination.coordinate;
-    final curveOffset =
-        _selectedRouteType == RouteType.comfortableShaded ? 0.00018 : 0.00005;
-    final midpoint = LatLng(
-      (start.latitude + end.latitude) / 2 + curveOffset,
-      (start.longitude + end.longitude) / 2 - curveOffset,
-    );
-    return [start, midpoint, end];
-  }
+  List<LatLng> get _routePoints => _walkingRoute?.points ?? const [];
 
   @override
   void initState() {
     super.initState();
-    _initializeCurrentLocation();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadBuildings();
+      _initializeCurrentLocation();
+    });
+  }
+
+  Future<void> _loadBuildings() async {
+    setState(() {
+      _isLoadingBuildings = true;
+      _buildingsError = null;
+      isuCampusBuildings.clear();
+    });
+    try {
+      final buildings = await CampusService.fetchBuildings();
+      if (!mounted) return;
+      setState(() {
+        isuCampusBuildings.addAll(buildings);
+        _isLoadingBuildings = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingBuildings = false;
+        _buildingsError =
+            'Unable to load campus locations. Check your connection and try again.';
+      });
+    }
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     _positionSubscription?.cancel();
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -133,15 +153,19 @@ class _MapViewScreenState extends State<MapViewScreen> {
     });
 
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
+      final locationEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!mounted) return;
+      if (!locationEnabled) {
         setState(() => _locationStatus =
             'Turn on Location Services to use your position.');
         return;
       }
 
       var permission = await Geolocator.checkPermission();
+      if (!mounted) return;
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+        if (!mounted) return;
       }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
@@ -155,9 +179,11 @@ class _MapViewScreenState extends State<MapViewScreen> {
           accuracy: LocationAccuracy.high,
         ),
       );
+      if (!mounted) return;
       _updateCurrentPosition(position);
 
       await _positionSubscription?.cancel();
+      if (!mounted) return;
       _positionSubscription = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
@@ -200,7 +226,11 @@ class _MapViewScreenState extends State<MapViewScreen> {
   }
 
   void _cancelDirections() {
-    setState(() => _navigationState = NavigationUiState.idle);
+    setState(() {
+      _navigationState = NavigationUiState.idle;
+      _walkingRoute = null;
+      _selectedRoom = null;
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _mapController.move(isuCampusCenter, 16.8);
     });
@@ -210,7 +240,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
     FocusScope.of(context).unfocus();
     setState(() => _navigationState = NavigationUiState.navigating);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _mapController.move(_selectedOrigin.coordinate, 18.5);
+      if (mounted)
+        _mapController.move(
+            _walkingRoute?.points.first ?? _selectedOrigin.coordinate, 18.5);
     });
   }
 
@@ -261,6 +293,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
   void _selectBuildingAndShowDetails(CampusBuilding building) {
     setState(() {
       _selectedBuilding = building;
+      _selectedRoom = null;
+      _walkingRoute = null;
       _navigationState = NavigationUiState.buildingDetails;
     });
     _mapController.move(building.coordinate, 17.5);
@@ -314,6 +348,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         children: [
           // 1. Interactive Full-Screen Campus Map Canvas
           Positioned.fill(
+            key: const ValueKey('campus-map'),
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
@@ -321,7 +356,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 initialZoom: 16.8,
                 minZoom: 15.5,
                 maxZoom: 19.5,
-                cameraConstraint: CameraConstraint.contain(
+                // Desktop viewports can be wider than the campus bounds.
+                // Constrain the center so resizing never invalidates the camera.
+                cameraConstraint: CameraConstraint.containCenter(
                   bounds: isuEchagueBounds,
                 ),
                 onTap: (_, __) {
@@ -341,6 +378,16 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
                 PolygonLayer(
                   polygons: [
+                    ...filteredBuildings
+                        .where((building) =>
+                            building.polygonCoordinates.length >= 3)
+                        .map((building) => Polygon(
+                              points: building.polygonCoordinates,
+                              color: const Color(0xFF0F751B)
+                                  .withValues(alpha: 0.18),
+                              borderColor: const Color(0xFF0F751B),
+                              borderStrokeWidth: 1.5,
+                            )),
                     Polygon(
                       points: isuEchagueMockBoundary,
                       color: const Color(0xFF0F751B).withValues(alpha: 0.05),
@@ -351,14 +398,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 ),
 
                 // Active Route Polylines (if route chosen or navigating)
-                if (_navigationState == NavigationUiState.chooseStartingPoint ||
-                    _navigationState == NavigationUiState.chooseRoute ||
-                    _navigationState == NavigationUiState.routeDetails ||
-                    _navigationState == NavigationUiState.navigating)
+                if (_walkingRoute != null &&
+                    (_navigationState == NavigationUiState.routeDetails ||
+                        _navigationState == NavigationUiState.navigating))
                   PolylineLayer(
                     polylines: [
                       Polyline(
-                        points: _mockRoutePoints,
+                        points: _routePoints,
                         strokeWidth: 5.0,
                         color: const Color(0xFF0F751B),
                         borderColor: Colors.white,
@@ -439,9 +485,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                 ],
                               ),
                               child: Text(
-                                building.acronym.isNotEmpty
-                                    ? building.acronym
-                                    : building.name,
+                                building.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.montserrat(
@@ -460,14 +504,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   }).toList(),
                 ),
 
-                if (_selectedBuilding != null &&
-                    _navigationState != NavigationUiState.idle &&
-                    _navigationState != NavigationUiState.buildingDetails &&
-                    _navigationState != NavigationUiState.arrived)
+                if (_walkingRoute != null &&
+                    (_navigationState == NavigationUiState.routeDetails ||
+                        _navigationState == NavigationUiState.navigating))
                   MarkerLayer(
                     markers: [
                       Marker(
-                        point: _selectedOrigin.coordinate,
+                        point: _walkingRoute?.points.first ??
+                            _selectedOrigin.coordinate,
                         width: 38,
                         height: 38,
                         child: Container(
@@ -541,6 +585,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
           // Floating Map Action Buttons (Recenter & Zoom)
           if (isuCampusBuildings.isEmpty)
             Center(
+              key: const ValueKey('campus-loading-status'),
               child: Container(
                 margin: const EdgeInsets.all(24),
                 padding: const EdgeInsets.all(20),
@@ -554,14 +599,20 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.location_off_outlined,
-                      size: 42,
-                      color: Color(0xFF0F751B),
-                    ),
+                    if (_isLoadingBuildings)
+                      const CircularProgressIndicator()
+                    else
+                      const Icon(
+                        Icons.location_off_outlined,
+                        size: 42,
+                        color: Color(0xFF0F751B),
+                      ),
                     const SizedBox(height: 10),
                     Text(
-                      'No campus locations available yet.',
+                      _isLoadingBuildings
+                          ? 'Loading campus locations...'
+                          : _buildingsError ??
+                              'No campus locations available yet.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.montserrat(
                         fontWeight: FontWeight.w700,
@@ -570,13 +621,19 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Published locations from the admin map will appear here.',
+                      'Campus locations are loaded from the database.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.montserrat(
                         fontSize: 11,
                         color: Colors.grey.shade600,
                       ),
                     ),
+                    if (!_isLoadingBuildings)
+                      TextButton.icon(
+                        onPressed: _loadBuildings,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
                   ],
                 ),
               ),
@@ -584,6 +641,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
           if (!_isNavigationActive)
             Positioned(
+              key: const ValueKey('map-action-buttons'),
               right: 16,
               top: topPadding + 170,
               child: Column(
@@ -643,6 +701,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
           // 2. Dark Green Header Bar
           if (!_isNavigationActive)
             Positioned(
+              key: const ValueKey('map-header'),
               top: 0,
               left: 0,
               right: 0,
@@ -1009,6 +1068,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 },
                 onDirectionsTap: () {
                   setState(() {
+                    _selectedRoom = null;
+                    _navigationState = NavigationUiState.chooseStartingPoint;
+                  });
+                },
+                onRoomDirectionsTap: (room) {
+                  setState(() {
+                    _selectedRoom = room;
+                    _walkingRoute = null;
                     _navigationState = NavigationUiState.chooseStartingPoint;
                   });
                 },
@@ -1023,6 +1090,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
               right: 0,
               child: ChooseStartingPointSheet(
                 destination: _selectedBuilding!,
+                destinationRoom: _selectedRoom,
                 origins: _availableOrigins,
                 selectedOrigin: _selectedOrigin,
                 onOriginSelected: (origin) {
@@ -1036,6 +1104,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 onCancel: _cancelDirections,
                 onContinue: () {
                   setState(() {
+                    _walkingRoute = null;
                     _navigationState = NavigationUiState.chooseRoute;
                   });
                 },
@@ -1050,6 +1119,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
               right: 0,
               child: ChooseRouteSheet(
                 destination: _selectedBuilding!,
+                destinationRoom: _selectedRoom,
                 origin: _selectedOrigin,
                 initialRouteType: _selectedRouteType,
                 initialTransportMode: _selectedTransportMode,
@@ -1059,9 +1129,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   });
                 },
                 onCancel: _cancelDirections,
-                onViewRoute: (type, mode) {
+                onViewRoute: (route, mode) {
                   setState(() {
-                    _selectedRouteType = type;
+                    _selectedRouteType = route.type;
+                    _walkingRoute = route;
                     _selectedTransportMode = mode;
                     _navigationState = NavigationUiState.routeDetails;
                   });
@@ -1076,7 +1147,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
               left: 0,
               right: 0,
               child: RouteDetailsSheet(
+                route: _walkingRoute!,
                 destination: _selectedBuilding!,
+                destinationRoom: _selectedRoom,
                 origin: _selectedOrigin,
                 selectedRouteType: _selectedRouteType,
                 selectedTransportMode: _selectedTransportMode,
@@ -1095,7 +1168,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
               _navigationState == NavigationUiState.navigating)
             Positioned.fill(
               child: ActiveNavigationHud(
+                route: _walkingRoute!,
                 destination: _selectedBuilding!,
+                destinationRoom: _selectedRoom,
                 origin: _selectedOrigin,
                 selectedRouteType: _selectedRouteType,
                 selectedTransportMode: _selectedTransportMode,
@@ -1114,6 +1189,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
             Positioned.fill(
               child: ArrivalHud(
                 destination: _selectedBuilding!,
+                destinationRoom: _selectedRoom,
                 onFinish: _cancelDirections,
               ),
             ),

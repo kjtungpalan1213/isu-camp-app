@@ -5,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../auth/screens/help_screen.dart';
 import '../../auth/screens/login_screen.dart';
 import '../../auth/services/user_session.dart';
-import '../data/campus_dataset.dart';
 import '../models/campus_models.dart';
 import 'about_us_screen.dart';
 
@@ -872,63 +871,7 @@ class _HistorySubScreenState extends State<_HistorySubScreen> {
   @override
   void initState() {
     super.initState();
-    if (isuCampusBuildings.isEmpty) {
-      _historyItems = [];
-      return;
-    }
-
-    CampusBuilding findBuilding(String id, int fallbackIndex) {
-      return isuCampusBuildings.firstWhere(
-        (building) => building.id == id,
-        orElse: () =>
-            isuCampusBuildings[fallbackIndex % isuCampusBuildings.length],
-      );
-    }
-
-    final caBuilding = findBuilding('bldg_ca_sbo', 0);
-    final ictBuilding = findBuilding('bldg_ccsict', 1);
-    final libBuilding = findBuilding('bldg_library', 2);
-    final adminBuilding = findBuilding('bldg_admin', 3);
-    final coeBuilding = findBuilding('bldg_coe', 4);
-
-    _historyItems = [
-      _HistoryEntry(
-        id: 'hist_1',
-        building: caBuilding,
-        timestamp: 'Today, 9:15 AM',
-        formattedDate: 'Today',
-      ),
-      _HistoryEntry(
-        id: 'hist_2',
-        building: caBuilding,
-        timestamp: 'Today, 8:40 AM',
-        formattedDate: 'Today',
-      ),
-      _HistoryEntry(
-        id: 'hist_3',
-        building: ictBuilding,
-        timestamp: 'Yesterday, 3:20 PM',
-        formattedDate: 'Yesterday',
-      ),
-      _HistoryEntry(
-        id: 'hist_4',
-        building: libBuilding,
-        timestamp: 'Aug 26, 11:15 AM',
-        formattedDate: 'Aug 26',
-      ),
-      _HistoryEntry(
-        id: 'hist_5',
-        building: adminBuilding,
-        timestamp: 'Aug 25, 2:10 PM',
-        formattedDate: 'Aug 25',
-      ),
-      _HistoryEntry(
-        id: 'hist_6',
-        building: coeBuilding,
-        timestamp: 'Aug 24, 10:05 AM',
-        formattedDate: 'Aug 24',
-      ),
-    ];
+    _historyItems = [];
   }
 
   void _clearHistory() {

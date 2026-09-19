@@ -1,6 +1,6 @@
   class UserSession {
     static String currentUsername = 'UserA1B2c3';
-    static String currentEmail = 'user@gmail.com';;
+    static String currentEmail = 'user@gmail.com';
 
     static void setRegisteredUser({
       required String username,
