@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/campus_models.dart';
+import '../services/campus_service.dart';
 
 // Frontend-only route estimate. Replace this helper with backend route values.
 class RouteMetricsHelper {
@@ -124,12 +125,14 @@ class RouteMetricsHelper {
 class BuildingDetailsSheet extends StatelessWidget {
   final CampusBuilding building;
   final VoidCallback onDirectionsTap;
+  final ValueChanged<CampusRoom> onRoomDirectionsTap;
   final VoidCallback? onClose;
 
   const BuildingDetailsSheet({
     super.key,
     required this.building,
     required this.onDirectionsTap,
+    required this.onRoomDirectionsTap,
     this.onClose,
   });
 
@@ -378,24 +381,45 @@ class BuildingDetailsSheet extends StatelessWidget {
                             ],
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color:
-                                const Color(0xFFECC700).withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            room.category.name.toUpperCase(),
-                            style: GoogleFonts.montserrat(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.brown.shade800,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFECC700)
+                                    .withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                room.category.name.toUpperCase(),
+                                style: GoogleFonts.montserrat(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.brown.shade800,
+                                ),
+                              ),
                             ),
-                          ),
+                            TextButton.icon(
+                              onPressed: () => onRoomDirectionsTap(room),
+                              icon: const Icon(Icons.directions, size: 16),
+                              label: const Text('Get directions'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF0F5A28),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                textStyle: GoogleFonts.montserrat(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -432,6 +456,7 @@ class BuildingDetailsSheet extends StatelessWidget {
 // =========================================================================
 class ChooseStartingPointSheet extends StatelessWidget {
   final CampusBuilding destination;
+  final CampusRoom? destinationRoom;
   final List<NavigationOrigin> origins;
   final NavigationOrigin selectedOrigin;
   final ValueChanged<NavigationOrigin> onOriginSelected;
@@ -442,6 +467,7 @@ class ChooseStartingPointSheet extends StatelessWidget {
   const ChooseStartingPointSheet({
     super.key,
     required this.destination,
+    this.destinationRoom,
     required this.origins,
     required this.selectedOrigin,
     required this.onOriginSelected,
@@ -520,7 +546,10 @@ class ChooseStartingPointSheet extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Going to ${destination.name}',
+            destinationRoom == null
+                ? 'Going to ${destination.name}'
+                : 'Going to ${destinationRoom!.title} (${destinationRoom!.floor}) '
+                    'via ${destination.name} entrance',
             style: GoogleFonts.montserrat(
               fontSize: 12,
               color: Colors.grey.shade600,
@@ -622,17 +651,18 @@ class ChooseStartingPointSheet extends StatelessWidget {
 // =========================================================================
 class ChooseRouteSheet extends StatefulWidget {
   final CampusBuilding destination;
+  final CampusRoom? destinationRoom;
   final NavigationOrigin origin;
   final RouteType initialRouteType;
   final TransportMode initialTransportMode;
   final VoidCallback onBack;
   final VoidCallback onCancel;
-  final Function(RouteType selectedType, TransportMode selectedMode)
-      onViewRoute;
+  final Function(WalkingRoute route, TransportMode selectedMode) onViewRoute;
 
   const ChooseRouteSheet({
     super.key,
     required this.destination,
+    this.destinationRoom,
     required this.origin,
     this.initialRouteType = RouteType.comfortableShaded,
     this.initialTransportMode = TransportMode.walking,
@@ -648,42 +678,51 @@ class ChooseRouteSheet extends StatefulWidget {
 class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
   late TransportMode _selectedMode;
   late RouteType _selectedRoute;
+  List<WalkingRoute> _routes = [];
+  bool _loading = true;
+  String? _error;
+
+  Future<void> _loadRoutes() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _routes = [];
+    });
+    try {
+      final routes =
+          await CampusService.fetchRoutes(widget.origin, widget.destination);
+      if (!mounted) return;
+      setState(() {
+        _routes = routes;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _selectedMode = widget.initialTransportMode;
     _selectedRoute = widget.initialRouteType;
+    _loadRoutes();
   }
 
   @override
   Widget build(BuildContext context) {
-    final shortestDist = RouteMetricsHelper.getDistanceString(
-      widget.origin,
-      widget.destination,
-      RouteType.shortest,
-      _selectedMode,
-    );
-    final shortestTime = RouteMetricsHelper.getTimeString(
-      widget.origin,
-      widget.destination,
-      RouteType.shortest,
-      _selectedMode,
-    );
-
-    final comfortableDist = RouteMetricsHelper.getDistanceString(
-      widget.origin,
-      widget.destination,
-      RouteType.comfortableShaded,
-      _selectedMode,
-    );
-    final comfortableTime = RouteMetricsHelper.getTimeString(
-      widget.origin,
-      widget.destination,
-      RouteType.comfortableShaded,
-      _selectedMode,
-    );
-
+    final shortest =
+        _routes.where((r) => r.type == RouteType.shortest).firstOrNull;
+    final shaded =
+        _routes.where((r) => r.type == RouteType.comfortableShaded).firstOrNull;
+    final shortestDist = shortest?.distance ?? '—';
+    final shortestTime = shortest?.time ?? '—';
+    final comfortableDist = shaded?.distance ?? '—';
+    final comfortableTime = shaded?.time ?? '—';
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFFE5E7EB),
@@ -870,41 +909,72 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
                   ),
                 ),
 
+                if (widget.destinationRoom != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '${widget.destinationRoom!.title} • ${widget.destinationRoom!.floor}. '
+                    'Mapped route ends at the building entrance.',
+                    style: GoogleFonts.montserrat(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
 
-                // Option 1: Shortest Route Card
-                _buildRouteCard(
-                  type: RouteType.shortest,
-                  title: 'Shortest Route',
-                  subtitle: 'Most Direct Path',
-                  distance: shortestDist,
-                  walkTime: shortestTime,
-                  icon: Icons.bolt,
-                  iconColor: const Color(0xFFECC700),
-                ),
+                if (_selectedMode != TransportMode.walking)
+                  const Text('Routing is currently available for Walking only.')
+                else if (_loading)
+                  const Center(child: CircularProgressIndicator())
+                else if (_error != null) ...[
+                  Text(_error!),
+                  TextButton(
+                      onPressed: _loadRoutes, child: const Text('Retry')),
+                ],
+                if (_selectedMode == TransportMode.walking &&
+                    !_loading &&
+                    _error == null) ...[
+                  Text(
+                      'Route starts at ${shortest?.startNodeName ?? "walking node"}. Distance is along the mapped paths.'),
+                  // Option 1: Shortest Route Card
+                  _buildRouteCard(
+                    type: RouteType.shortest,
+                    title: 'Shortest Route',
+                    subtitle: 'Most Direct Path',
+                    distance: shortestDist,
+                    walkTime: shortestTime,
+                    icon: Icons.bolt,
+                    iconColor: const Color(0xFFECC700),
+                  ),
 
-                const SizedBox(height: 12),
+                  const SizedBox(height: 12),
 
-                // Option 2: Comfortable Path Card (Shaded)
-                _buildRouteCard(
-                  type: RouteType.comfortableShaded,
-                  title: 'Comfortable Path',
-                  subtitle: 'Shaded, Wider',
-                  distance: comfortableDist,
-                  walkTime: comfortableTime,
-                  icon: Icons.cloud_outlined,
-                  iconColor: const Color(0xFF0F5A28),
-                ),
+                  // Option 2: Comfortable Path Card (Shaded)
+                  _buildRouteCard(
+                    type: RouteType.comfortableShaded,
+                    title: 'Comfortable Path',
+                    subtitle: 'Prefers shaded pathways',
+                    distance: comfortableDist,
+                    walkTime: comfortableTime,
+                    icon: Icons.cloud_outlined,
+                    iconColor: const Color(0xFF0F5A28),
+                  ),
 
-                const SizedBox(height: 20),
-
+                  const SizedBox(height: 20),
+                ], // Walking route cards
                 // "View Route" Button
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: () =>
-                        widget.onViewRoute(_selectedRoute, _selectedMode),
+                    onPressed: _selectedMode != TransportMode.walking ||
+                            _loading ||
+                            _error != null ||
+                            _routes.isEmpty
+                        ? null
+                        : () => widget.onViewRoute(
+                            _routes.firstWhere((r) => r.type == _selectedRoute),
+                            _selectedMode),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0F5A28),
                       shape: RoundedRectangleBorder(
@@ -1093,6 +1163,8 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
 // =========================================================================
 class RouteDetailsSheet extends StatelessWidget {
   final CampusBuilding destination;
+  final CampusRoom? destinationRoom;
+  final WalkingRoute route;
   final NavigationOrigin origin;
   final RouteType selectedRouteType;
   final TransportMode selectedTransportMode;
@@ -1102,7 +1174,9 @@ class RouteDetailsSheet extends StatelessWidget {
 
   const RouteDetailsSheet({
     super.key,
+    required this.route,
     required this.destination,
+    this.destinationRoom,
     required this.origin,
     required this.selectedRouteType,
     this.selectedTransportMode = TransportMode.walking,
@@ -1115,26 +1189,12 @@ class RouteDetailsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final isShortest = selectedRouteType == RouteType.shortest;
     final title = isShortest ? 'Shortest Route' : 'Comfortable Path';
-    final subtitle = isShortest ? 'Most Direct Path' : 'Shaded, Wider';
+    final subtitle =
+        isShortest ? 'Most Direct Path' : 'Prefers shaded pathways';
 
-    final distance = RouteMetricsHelper.getDistanceString(
-      origin,
-      destination,
-      selectedRouteType,
-      selectedTransportMode,
-    );
-    final estTime = RouteMetricsHelper.getTimeString(
-      origin,
-      destination,
-      selectedRouteType,
-      selectedTransportMode,
-    );
-    final arrivalTime = RouteMetricsHelper.getArrivalTime(
-      origin,
-      destination,
-      selectedRouteType,
-      selectedTransportMode,
-    );
+    final distance = route.distance;
+    final estTime = route.time;
+    final arrivalTime = route.arrivalTime;
 
     final icon = isShortest ? Icons.bolt : Icons.cloud_outlined;
     final iconColor =
@@ -1191,6 +1251,17 @@ class RouteDetailsSheet extends StatelessWidget {
             ),
           ),
 
+          if (destinationRoom != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${destinationRoom!.title} • ${destinationRoom!.floor}. '
+              'Walking route ends at ${destination.name} entrance.',
+              style: GoogleFonts.montserrat(
+                fontSize: 11,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
 
           // Origin to Destination Timeline
@@ -1383,6 +1454,8 @@ class RouteDetailsSheet extends StatelessWidget {
 // =========================================================================
 class ActiveNavigationHud extends StatelessWidget {
   final CampusBuilding destination;
+  final CampusRoom? destinationRoom;
+  final WalkingRoute route;
   final NavigationOrigin origin;
   final RouteType selectedRouteType;
   final TransportMode selectedTransportMode;
@@ -1391,7 +1464,9 @@ class ActiveNavigationHud extends StatelessWidget {
 
   const ActiveNavigationHud({
     super.key,
+    required this.route,
     required this.destination,
+    this.destinationRoom,
     required this.origin,
     required this.selectedRouteType,
     required this.selectedTransportMode,
@@ -1402,22 +1477,9 @@ class ActiveNavigationHud extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
-    final distance = RouteMetricsHelper.getDistanceString(
-      origin,
-      destination,
-      selectedRouteType,
-      selectedTransportMode,
-    );
-    final time = RouteMetricsHelper.getTimeString(
-      origin,
-      destination,
-      selectedRouteType,
-      selectedTransportMode,
-    );
-    final heading = RouteMetricsHelper.getHeadingInstruction(
-      origin,
-      destination,
-    );
+    final distance = route.distance;
+    final time = route.time;
+    final heading = 'Follow the highlighted walking path';
 
     return Stack(
       children: [
@@ -1554,7 +1616,11 @@ class ActiveNavigationHud extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            destination.name,
+                            destinationRoom == null
+                                ? destination.name
+                                : '${destinationRoom!.title} '
+                                    '(${destinationRoom!.floor}) via '
+                                    '${destination.name} entrance',
                             style: GoogleFonts.montserrat(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -1652,11 +1718,13 @@ class ActiveNavigationHud extends StatelessWidget {
 // =========================================================================
 class ArrivalHud extends StatelessWidget {
   final CampusBuilding destination;
+  final CampusRoom? destinationRoom;
   final VoidCallback onFinish;
 
   const ArrivalHud({
     super.key,
     required this.destination,
+    this.destinationRoom,
     required this.onFinish,
   });
 
@@ -1706,7 +1774,9 @@ class ArrivalHud extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        "You've Arrived!",
+                        destinationRoom == null
+                            ? "You've Arrived!"
+                            : 'Arrived at building entrance',
                         style: GoogleFonts.montserrat(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -1715,7 +1785,11 @@ class ArrivalHud extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        destination.name,
+                        destinationRoom == null
+                            ? destination.name
+                            : '${destination.name} • '
+                                '${destinationRoom!.title}, '
+                                '${destinationRoom!.floor}',
                         style: GoogleFonts.montserrat(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
