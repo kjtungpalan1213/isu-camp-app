@@ -8,8 +8,17 @@ load_dotenv()
 
 
 def send_otp_email(recipient: str, otp: str):
-    sender = os.getenv("EMAIL_USERNAME")
-    password = os.getenv("EMAIL_PASSWORD")
+    smtp_host = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.getenv("MAIL_PORT", "587"))
+    use_tls = os.getenv("MAIL_USE_TLS", "True").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    username = os.getenv("MAIL_USERNAME") or os.getenv("EMAIL_USERNAME")
+    password = os.getenv("MAIL_PASSWORD") or os.getenv("EMAIL_PASSWORD")
+    sender = os.getenv("MAIL_DEFAULT_SENDER") or username
+
+    if not username or not password or not sender:
+        raise RuntimeError("SMTP email settings are not configured")
 
     message = EmailMessage()
     message["Subject"] = "ISU-CAMP Email Verification"
@@ -31,7 +40,8 @@ ISU-CAMP Team
 """
     )
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(sender, password)
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        if use_tls:
+            server.starttls()
+        server.login(username, password)
         server.send_message(message)
