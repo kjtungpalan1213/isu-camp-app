@@ -18,11 +18,49 @@ class LoginException implements Exception {
   String toString() => message;
 }
 
+class OtpException implements Exception {
+  final String message;
+  final int? attemptsRemaining;
+  final int? retryAfterSeconds;
+
+  const OtpException(
+    this.message, {
+    this.attemptsRemaining,
+    this.retryAfterSeconds,
+  });
+
+  bool get isLocked => attemptsRemaining == 0 || retryAfterSeconds != null;
+
+  @override
+  String toString() => message;
+}
+
 class AuthService {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: 'https://api.kumpas.live',
   );
+
+  static OtpException _otpException(
+    http.Response response,
+    Map<String, dynamic> data,
+    String fallback,
+  ) {
+    final message = data['detail']?.toString() ?? fallback;
+    final remainingMatch =
+        RegExp(r'(\d+)\s+attempt\(s\)\s+remaining').firstMatch(message);
+    final structuredRemaining = data['attempts_remaining'];
+    final retryAfter = response.headers['retry-after'];
+    return OtpException(
+      message,
+      attemptsRemaining: structuredRemaining is int
+          ? structuredRemaining
+          : remainingMatch == null
+              ? (message.toLowerCase().contains('too many') ? 0 : null)
+              : int.tryParse(remainingMatch.group(1)!),
+      retryAfterSeconds: retryAfter == null ? null : int.tryParse(retryAfter),
+    );
+  }
 
   // =========================================================
   // LOGIN
@@ -57,9 +95,8 @@ class AuthService {
       retryAfterSeconds: retryAfter == null ? null : int.tryParse(retryAfter),
       failedAttempts:
           failedAttempts == null ? null : int.tryParse(failedAttempts),
-      remainingAttempts: remainingAttempts == null
-          ? null
-          : int.tryParse(remainingAttempts),
+      remainingAttempts:
+          remainingAttempts == null ? null : int.tryParse(remainingAttempts),
     );
   }
 
@@ -88,8 +125,10 @@ class AuthService {
       return data;
     }
 
-    throw Exception(
-      data['detail'] ?? 'Failed to send verification code.',
+    throw _otpException(
+      response,
+      data,
+      'Failed to send verification code.',
     );
   }
 
@@ -118,9 +157,7 @@ class AuthService {
       return data;
     }
 
-    throw Exception(
-      data['detail'] ?? 'OTP verification failed.',
-    );
+    throw _otpException(response, data, 'OTP verification failed.');
   }
 
   // =========================================================
@@ -178,8 +215,10 @@ class AuthService {
       return data;
     }
 
-    throw Exception(
-      data['detail'] ?? 'Failed to send password reset code.',
+    throw _otpException(
+      response,
+      data,
+      'Failed to send password reset code.',
     );
   }
 
@@ -208,9 +247,7 @@ class AuthService {
       return data;
     }
 
-    throw Exception(
-      data['detail'] ?? 'OTP verification failed.',
-    );
+    throw _otpException(response, data, 'OTP verification failed.');
   }
 
   // =========================================================
