@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'help_screen.dart';
 import '../services/user_session.dart';
 import '../services/auth_service.dart';
+import '../services/verification_security_controller.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -51,6 +52,11 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   bool _isAgreedToTerms = false;
+  bool _isRequestingCode = false;
+  bool _isVerifyingCode = false;
+  bool _isResendingCode = false;
+  bool _isCreatingAccount = false;
+  late final VerificationSecurityController _security;
 
   // Real-time password requirement flags
   bool _hasMinLength = false;
@@ -115,10 +121,35 @@ class _RegisterScreenState extends State<RegisterScreen>
     _controller.forward();
 
     _passwordController.addListener(_validatePasswordRequirements);
+    _security = VerificationSecurityController(onTimeout: _handleTimeout)
+      ..addListener(_refreshSecurityState);
+  }
+
+  void _refreshSecurityState() {
+    if (mounted) setState(() {});
+  }
+
+  void _handleTimeout(VerificationTimeoutReason reason) {
+    if (!mounted || _currentStep == 1) return;
+    for (final controller in _otpControllers) {
+      controller.clear();
+    }
+    _passwordController.clear();
+    _confirmPasswordController.clear();
+    final message = switch (reason) {
+      VerificationTimeoutReason.inactivity =>
+        'Sign-up closed because there was no activity.',
+      VerificationTimeoutReason.codeExpired =>
+        'Verification code expired. Please create your account again.',
+      VerificationTimeoutReason.setupExpired =>
+        'Account setup session expired. Please try again.',
+    };
+    Navigator.pop(context, message);
   }
 
   void _validatePasswordRequirements() {
     final text = _passwordController.text;
+    if (_currentStep == 3) _security.recordActivity();
     setState(() {
       _hasMinLength = text.length >= 8;
       _hasMixedCase =
@@ -135,6 +166,9 @@ class _RegisterScreenState extends State<RegisterScreen>
 
   @override
   void dispose() {
+    _security
+      ..removeListener(_refreshSecurityState)
+      ..dispose();
     _controller.dispose();
     _usernameController.dispose();
     _emailController.dispose();
@@ -159,187 +193,238 @@ class _RegisterScreenState extends State<RegisterScreen>
   }
 
   // --- Step 1 Navigation: Validate Email & Username ---
-Future<void> _handleStep1Continue() async {
-  final username = _usernameController.text.trim();
-  final email = _emailController.text.trim();
+  Future<void> _handleStep1Continue() async {
+    if (_isRequestingCode) return;
+    final username = _usernameController.text.trim();
+    final email = _emailController.text.trim();
 
-  if (username.isEmpty || email.isEmpty) {
-    _showSnackBar(
-      'Please fill in both Username and Email.',
-      Colors.redAccent,
-    );
-    return;
+    if (username.isEmpty || email.isEmpty) {
+      _showSnackBar(
+        'Please fill in both Username and Email.',
+        Colors.redAccent,
+      );
+      return;
+    }
+
+    final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
+
+    if (!emailRegex.hasMatch(email)) {
+      _showSnackBar(
+        'Please enter a valid email address.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
+
+    setState(() => _isRequestingCode = true);
+    try {
+      await AuthService.requestSignupOtp(
+        username: username,
+        email: email,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentStep = 2;
+      });
+      _security.startOtpChallenge();
+      _otpFocusNodes.first.requestFocus();
+
+      _showSnackBar(
+        'Verification code sent to $email.',
+        const Color(0xFF0F751B),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      String message = error.toString();
+      message = message.replaceFirst('Exception: ', '');
+
+      _showSnackBar(
+        message,
+        Colors.redAccent,
+      );
+    } finally {
+      if (mounted) setState(() => _isRequestingCode = false);
+    }
   }
-
-  final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
-
-  if (!emailRegex.hasMatch(email)) {
-    _showSnackBar(
-      'Please enter a valid email address.',
-      Colors.orangeAccent.shade700,
-    );
-    return;
-  }
-
-  try {
-    await AuthService.requestSignupOtp(
-      username: username,
-      email: email,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _currentStep = 2;
-    });
-
-    _showSnackBar(
-      'Verification code sent to $email.',
-      const Color(0xFF0F751B),
-    );
-  } catch (error) {
-    if (!mounted) return;
-
-    String message = error.toString();
-    message = message.replaceFirst('Exception: ', '');
-
-    _showSnackBar(
-      message,
-      Colors.redAccent,
-    );
-  }
-}
 
   // --- Step 2 Navigation: Validate 6-Digit Code ---
-Future<void> _handleStep2Verify() async {
-  final code = _otpControllers.map((c) => c.text).join();
+  Future<void> _handleStep2Verify() async {
+    if (_isVerifyingCode || !_security.canVerify) return;
+    final code = _otpControllers.map((c) => c.text).join();
 
-  if (code.length != 6) {
-    _showSnackBar(
-      'Please enter the full 6-digit verification code.',
-      Colors.redAccent,
-    );
-    return;
+    if (code.length != 6) {
+      _showSnackBar(
+        'Please enter the full 6-digit verification code.',
+        Colors.redAccent,
+      );
+      return;
+    }
+
+    setState(() => _isVerifyingCode = true);
+    try {
+      await AuthService.verifySignupOtp(
+        email: _emailController.text.trim(),
+        otp: int.parse(code),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentStep = 3;
+      });
+      _security.beginPasswordSetup();
+
+      _showSnackBar(
+        'Email verified! Now set a strong password.',
+        const Color(0xFF0F751B),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      final remaining = error is OtpException ? error.attemptsRemaining : null;
+      _security.recordIncorrectAttempt(serverRemaining: remaining);
+      for (final controller in _otpControllers) {
+        controller.clear();
+      }
+      _otpFocusNodes.first.requestFocus();
+
+      String message = error.toString();
+      message = message.replaceFirst('Exception: ', '');
+
+      _showSnackBar(
+        message,
+        Colors.redAccent,
+      );
+    } finally {
+      if (mounted) setState(() => _isVerifyingCode = false);
+    }
   }
 
-  try {
-    await AuthService.verifySignupOtp(
-      email: _emailController.text.trim(),
-      otp: int.parse(code),
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _currentStep = 3;
-    });
-
-    _showSnackBar(
-      'Email verified! Now set a strong password.',
-      const Color(0xFF0F751B),
-    );
-  } catch (error) {
-    if (!mounted) return;
-
-    String message = error.toString();
-    message = message.replaceFirst('Exception: ', '');
-
-    _showSnackBar(
-      message,
-      Colors.redAccent,
-    );
+  Future<void> _handleResendSignupCode() async {
+    if (!_security.canResend || _isResendingCode) return;
+    setState(() => _isResendingCode = true);
+    try {
+      await AuthService.requestSignupOtp(
+        username: _usernameController.text.trim(),
+        email: _emailController.text.trim(),
+      );
+      if (!mounted) return;
+      _security.recordResend();
+      for (final controller in _otpControllers) {
+        controller.clear();
+      }
+      _otpFocusNodes.first.requestFocus();
+      _showSnackBar(
+        'A new verification code was sent.',
+        const Color(0xFF0F751B),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showSnackBar(
+        error.toString().replaceFirst('Exception: ', ''),
+        Colors.redAccent,
+      );
+    } finally {
+      if (mounted) setState(() => _isResendingCode = false);
+    }
   }
-}
 
   // --- Step 3 Navigation: Complete Sign Up ---
-Future<void> _handleStep3Complete() async {
-  final password = _passwordController.text;
-  final confirmPassword = _confirmPasswordController.text;
+  Future<void> _handleStep3Complete() async {
+    if (_isCreatingAccount) return;
+    final password = _passwordController.text;
+    final confirmPassword = _confirmPasswordController.text;
 
-  if (password.isEmpty || confirmPassword.isEmpty) {
-    _showSnackBar(
-      'Please enter and confirm your password.',
-      Colors.redAccent,
-    );
-    return;
-  }
+    if (password.isEmpty || confirmPassword.isEmpty) {
+      _showSnackBar(
+        'Please enter and confirm your password.',
+        Colors.redAccent,
+      );
+      return;
+    }
 
-  if (password != confirmPassword) {
-    _showSnackBar(
-      'Passwords do not match.',
-      Colors.redAccent,
-    );
-    return;
-  }
+    if (password != confirmPassword) {
+      _showSnackBar(
+        'Passwords do not match.',
+        Colors.redAccent,
+      );
+      return;
+    }
 
-  if (!_hasMinLength ||
-      !_hasMixedCase ||
-      !_hasNumber ||
-      !_hasSpecialChar ||
-      !_hasNoCommonPatterns) {
-    _showSnackBar(
-      'Please meet all required password criteria.',
-      Colors.orangeAccent.shade700,
-    );
-    return;
-  }
+    if (!_hasMinLength ||
+        !_hasMixedCase ||
+        !_hasNumber ||
+        !_hasSpecialChar ||
+        !_hasNoCommonPatterns) {
+      _showSnackBar(
+        'Please meet all required password criteria.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
 
-  if (!_isAgreedToTerms) {
-    _showSnackBar(
-      'Please agree to the Terms & Conditions and Privacy Policy.',
-      Colors.orangeAccent.shade700,
-    );
-    return;
-  }
+    if (!_isAgreedToTerms) {
+      _showSnackBar(
+        'Please agree to the Terms & Conditions and Privacy Policy.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
 
-  try {
-    final response = await AuthService.setSignupPassword(
-      email: _emailController.text.trim(),
-      password: password,
-      confirmPassword: confirmPassword,
-    );
+    setState(() => _isCreatingAccount = true);
+    try {
+      final response = await AuthService.setSignupPassword(
+        email: _emailController.text.trim(),
+        password: password,
+        confirmPassword: confirmPassword,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    final registeredUsername = _usernameController.text.trim();
-    final registeredEmail = _emailController.text.trim();
+      final registeredUsername = _usernameController.text.trim();
+      final registeredEmail = _emailController.text.trim();
 
-    UserSession.setRegisteredUser(
-      username: registeredUsername,
-      email: registeredEmail,
-    );
+      UserSession.setRegisteredUser(
+        username: registeredUsername,
+        email: registeredEmail,
+      );
 
-    UserSession.setLoggedInUser(
-      username: registeredUsername,
-      token: response['access_token'] as String?,
-    );
+      UserSession.setLoggedInUser(
+        username: registeredUsername,
+        token: response['access_token'] as String?,
+      );
 
-    _showSnackBar(
-      'Account created successfully! Welcome to ISU-CAMP.',
-      const Color(0xFF0F751B),
-    );
+      _showSnackBar(
+        'Account created successfully! Welcome to ISU-CAMP.',
+        const Color(0xFF0F751B),
+      );
 
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (context) => WelcomeGreetingScreen(
-          userName: registeredUsername,
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (context) => WelcomeGreetingScreen(
+            userName: registeredUsername,
+          ),
         ),
-      ),
-      (route) => false,
-    );
-  } catch (error) {
-    if (!mounted) return;
+        (route) => false,
+      );
+    } catch (error) {
+      if (!mounted) return;
 
-    String message = error.toString();
-    message = message.replaceFirst('Exception: ', '');
+      String message = error.toString();
+      message = message.replaceFirst('Exception: ', '');
 
-    _showSnackBar(
-      message,
-      Colors.redAccent,
-    );
+      _showSnackBar(
+        message,
+        Colors.redAccent,
+      );
+    } finally {
+      if (mounted) setState(() => _isCreatingAccount = false);
+    }
   }
-}
 
   // --- Terms and Conditions Dialog ---
   Future<bool?> _showTermsDialog() {
@@ -857,7 +942,7 @@ Future<void> _handleStep3Complete() async {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _handleStep1Continue,
+              onPressed: _isRequestingCode ? null : _handleStep1Continue,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0F751B),
                 elevation: 2,
@@ -865,14 +950,23 @@ Future<void> _handleStep3Complete() async {
                   borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              child: Text(
-                'Continue & Send Code',
-                style: GoogleFonts.montserrat(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
+              child: _isRequestingCode
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'Continue & Send Code',
+                      style: GoogleFonts.montserrat(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -942,7 +1036,22 @@ Future<void> _handleStep3Complete() async {
             ),
           ),
 
-          const SizedBox(height: 22),
+          const SizedBox(height: 10),
+          Text(
+            _security.isVerificationLocked
+                ? 'Too many incorrect codes. Try again in ${_security.format(_security.verificationLockRemaining)}'
+                : _security.showInactivityWarning
+                    ? 'Session closes in ${_security.format(_security.inactivityRemaining)} without activity'
+                    : 'Code expires in ${_security.format(_security.codeRemaining)} • ${_security.attemptsRemaining} attempts left',
+            style: GoogleFonts.montserrat(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: _security.isVerificationLocked
+                  ? Colors.redAccent
+                  : Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 12),
 
           // 6 OTP Digit Boxes
           Row(
@@ -954,6 +1063,7 @@ Future<void> _handleStep3Complete() async {
                 child: TextField(
                   controller: _otpControllers[index],
                   focusNode: _otpFocusNodes[index],
+                  enabled: !_security.isVerificationLocked && !_isVerifyingCode,
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
                   maxLength: 1,
@@ -982,6 +1092,7 @@ Future<void> _handleStep3Complete() async {
                     ),
                   ),
                   onChanged: (value) {
+                    _security.recordActivity();
                     if (value.isNotEmpty && index < 5) {
                       _otpFocusNodes[index + 1].requestFocus();
                     } else if (value.isEmpty && index > 0) {
@@ -1001,6 +1112,10 @@ Future<void> _handleStep3Complete() async {
             children: [
               GestureDetector(
                 onTap: () {
+                  _security.cancel();
+                  for (final controller in _otpControllers) {
+                    controller.clear();
+                  }
                   setState(() {
                     _currentStep = 1;
                   });
@@ -1015,18 +1130,25 @@ Future<void> _handleStep3Complete() async {
                 ),
               ),
               GestureDetector(
-                onTap: () {
-                  _showSnackBar(
-                    'A new verification code has been sent to ${_emailController.text.trim()}.',
-                    const Color(0xFF0F751B),
-                  );
-                },
+                onTap: _security.canResend && !_isResendingCode
+                    ? _handleResendSignupCode
+                    : null,
                 child: Text(
-                  'Resend code',
+                  _isResendingCode
+                      ? 'Sending…'
+                      : _security.isResendLocked
+                          ? 'Resend in '
+                              '${_security.format(_security.resendRemaining)}'
+                          : _security.canResend
+                              ? 'Resend code'
+                              : 'Resend in '
+                                  '${_security.format(_security.resendRemaining)}',
                   style: GoogleFonts.montserrat(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: const Color(0xFF1E60D0),
+                    color: _security.canResend
+                        ? const Color(0xFF1E60D0)
+                        : Colors.grey.shade500,
                   ),
                 ),
               ),
@@ -1040,7 +1162,9 @@ Future<void> _handleStep3Complete() async {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _handleStep2Verify,
+              onPressed: _security.canVerify && !_isVerifyingCode
+                  ? _handleStep2Verify
+                  : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0F751B),
                 elevation: 2,
@@ -1048,14 +1172,26 @@ Future<void> _handleStep3Complete() async {
                   borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              child: Text(
-                'Verify & Continue',
-                style: GoogleFonts.montserrat(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
+              child: _isVerifyingCode
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      _security.isVerificationLocked
+                          ? 'Try again in '
+                              '${_security.format(_security.verificationLockRemaining)}'
+                          : 'Verify & Continue',
+                      style: GoogleFonts.montserrat(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -1112,6 +1248,17 @@ Future<void> _handleStep3Complete() async {
             ),
           ),
 
+          const SizedBox(height: 4),
+          Text(
+            _security.showInactivityWarning
+                ? 'Session closes in ${_security.format(_security.inactivityRemaining)} without activity'
+                : 'Setup session expires in ${_security.format(_security.setupRemaining)}',
+            style: GoogleFonts.montserrat(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
           const SizedBox(height: 16),
 
           // Password Field
@@ -1182,6 +1329,7 @@ Future<void> _handleStep3Complete() async {
           TextField(
             controller: _confirmPasswordController,
             obscureText: !_isConfirmPasswordVisible,
+            onChanged: (_) => _security.recordActivity(),
             decoration: InputDecoration(
               hintText: 'Re-enter password',
               hintStyle: GoogleFonts.montserrat(
@@ -1318,7 +1466,7 @@ Future<void> _handleStep3Complete() async {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _handleStep3Complete,
+              onPressed: _isCreatingAccount ? null : _handleStep3Complete,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0F751B),
                 elevation: 2,
@@ -1326,14 +1474,23 @@ Future<void> _handleStep3Complete() async {
                   borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              child: Text(
-                'Complete Registration',
-                style: GoogleFonts.montserrat(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
+              child: _isCreatingAccount
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'Complete Registration',
+                      style: GoogleFonts.montserrat(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -1343,180 +1500,186 @@ Future<void> _handleStep3Complete() async {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF072B18), // Deep ISU Forest Green
-              Color(0xFF02170C), // Dark evergreen
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 24.0,
-              vertical: 16.0,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _security.recordActivity(),
+      child: Scaffold(
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFF072B18), // Deep ISU Forest Green
+                Color(0xFF02170C), // Dark evergreen
+              ],
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 1. Header: Back navigation & Campus Logo
-                SlideTransition(
-                  position: _headerSlide,
-                  child: FadeTransition(
-                    opacity: _headerFade,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        GestureDetector(
-                          onTap: () {
-                            if (_currentStep > 1) {
-                              setState(() {
-                                _currentStep--;
-                              });
-                            } else {
+          ),
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24.0,
+                vertical: 16.0,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 1. Header: Back navigation & Campus Logo
+                  SlideTransition(
+                    position: _headerSlide,
+                    child: FadeTransition(
+                      opacity: _headerFade,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          GestureDetector(
+                            onTap: () {
+                              if (_currentStep > 1) {
+                                _security.cancel();
+                                for (final controller in _otpControllers) {
+                                  controller.clear();
+                                }
+                                _passwordController.clear();
+                                _confirmPasswordController.clear();
+                              }
                               Navigator.pop(context);
-                            }
-                          },
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 34,
-                                height: 34,
-                                child: ClipOval(
-                                  child: Image.asset(
-                                    'assets/images/logo_kumpas_app.png',
-                                    fit: BoxFit.contain,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            const Icon(
-                                      Icons.navigation,
-                                      color: Colors.white,
+                            },
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 34,
+                                  height: 34,
+                                  child: ClipOval(
+                                    child: Image.asset(
+                                      'assets/images/logo_kumpas_app.png',
+                                      fit: BoxFit.contain,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              const Icon(
+                                        Icons.navigation,
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'KUMPAS',
-                                style: GoogleFonts.montserrat(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.8,
+                                const SizedBox(width: 8),
+                                Text(
+                                  'KUMPAS',
+                                  style: GoogleFonts.montserrat(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.8,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(
+                            width: 44,
+                            height: 44,
+                            child: ClipOval(
+                              child: Image.asset(
+                                'assets/images/logo_isu_png.png',
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(
+                                  Icons.school,
                                   color: Colors.white,
                                 ),
                               ),
-                            ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // 2. White Registration Card with In-Card Dynamic Step Switcher
+                  AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, child) {
+                      return FadeTransition(
+                        opacity: _cardFade,
+                        child: Transform.scale(
+                          scale: _cardScale.value,
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(22.0),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(
+                                _cardRadius.value,
+                              ),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.black38,
+                                  blurRadius: 16,
+                                  offset: Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildStepIndicator(),
+                                const SizedBox(height: 18),
+                                AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 320),
+                                  switchInCurve: Curves.easeOutCubic,
+                                  switchOutCurve: Curves.easeInCubic,
+                                  transitionBuilder: (child, animation) {
+                                    return FadeTransition(
+                                      opacity: animation,
+                                      child: child,
+                                    );
+                                  },
+                                  child: _currentStep == 1
+                                      ? _buildStep1()
+                                      : _currentStep == 2
+                                          ? _buildStep2()
+                                          : _buildStep3(),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                        SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: ClipOval(
-                            child: Image.asset(
-                              'assets/images/logo_isu_png.png',
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  const Icon(
-                                Icons.school,
-                                color: Colors.white,
-                              ),
-                            ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 28),
+
+                  // 3. Footer: Shield + Campus Name
+                  FadeTransition(
+                    opacity: _footerFade,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.shield_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Isabela State University- Echague Campus',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // 2. White Registration Card with In-Card Dynamic Step Switcher
-                AnimatedBuilder(
-                  animation: _controller,
-                  builder: (context, child) {
-                    return FadeTransition(
-                      opacity: _cardFade,
-                      child: Transform.scale(
-                        scale: _cardScale.value,
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(22.0),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(
-                              _cardRadius.value,
-                            ),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black38,
-                                blurRadius: 16,
-                                offset: Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildStepIndicator(),
-                              const SizedBox(height: 18),
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 320),
-                                switchInCurve: Curves.easeOutCubic,
-                                switchOutCurve: Curves.easeInCubic,
-                                transitionBuilder: (child, animation) {
-                                  return FadeTransition(
-                                    opacity: animation,
-                                    child: child,
-                                  );
-                                },
-                                child: _currentStep == 1
-                                    ? _buildStep1()
-                                    : _currentStep == 2
-                                        ? _buildStep2()
-                                        : _buildStep3(),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-
-                const SizedBox(height: 28),
-
-                // 3. Footer: Shield + Campus Name
-                FadeTransition(
-                  opacity: _footerFade,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.shield_outlined,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Isabela State University- Echague Campus',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
           ),
         ),

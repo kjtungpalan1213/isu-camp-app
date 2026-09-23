@@ -9,6 +9,7 @@ import 'get_started_screen.dart';
 import 'help_screen.dart';
 import 'register_screen.dart';
 import '../services/user_session.dart';
+import '../services/verification_security_controller.dart';
 import '../../onboarding/screens/welcome_greeting_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -23,9 +24,11 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isCaptchaChecked = false;
   bool _isPasswordVisible = false;
+  bool _isLoggingIn = false;
   int _failedLoginAttempts = 0;
   Timer? _lockoutTimer;
   DateTime? _loginLockedUntil;
+  late final VerificationSecurityController _forgotSecurity;
 
   bool get _isLoginLocked =>
       _loginLockedUntil != null && DateTime.now().isBefore(_loginLockedUntil!);
@@ -36,118 +39,148 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _forgotSecurity = VerificationSecurityController(
+      onTimeout: _handleForgotPasswordTimeout,
+    );
+  }
+
+  void _handleForgotPasswordTimeout(VerificationTimeoutReason reason) {
+    if (!mounted) return;
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    final message = switch (reason) {
+      VerificationTimeoutReason.inactivity =>
+        'Password reset closed because there was no activity.',
+      VerificationTimeoutReason.codeExpired =>
+        'Verification code expired. Please request a new code.',
+      VerificationTimeoutReason.setupExpired =>
+        'Password setup session expired. Please try again.',
+    };
+    _showSnackBar(message, Colors.orangeAccent.shade700);
+  }
+
+  @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
     _lockoutTimer?.cancel();
+    _forgotSecurity.dispose();
     super.dispose();
   }
 
-Future<void> _handleLogin() async {
-  if (_isLoginLocked) {
-    _showSnackBar(
-      'Too many failed attempts. Try again in ${_formatLockoutTime()}.',
-      Colors.orangeAccent.shade700,
-    );
-    return;
-  }
+  Future<void> _handleLogin() async {
+    if (_isLoggingIn) return;
+    if (_isLoginLocked) {
+      _showSnackBar(
+        'Too many failed attempts. Try again in ${_formatLockoutTime()}.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
 
-  final identifier = _usernameController.text.trim();
-  final password = _passwordController.text.trim();
+    final identifier = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
 
-  if (identifier.isEmpty || password.isEmpty) {
-    _showSnackBar(
-      'Please fill in both Username and Password.',
-      Colors.redAccent,
-    );
-    return;
-  }
+    if (identifier.isEmpty || password.isEmpty) {
+      _showSnackBar(
+        'Please fill in both Username and Password.',
+        Colors.redAccent,
+      );
+      return;
+    }
 
-  if (!_isCaptchaChecked) {
-    _showSnackBar(
-      'Please complete the verification checkbox.',
-      Colors.orangeAccent.shade700,
-    );
-    return;
-  }
+    if (!_isCaptchaChecked) {
+      _showSnackBar(
+        'Please complete the verification checkbox.',
+        Colors.orangeAccent.shade700,
+      );
+      return;
+    }
 
-  try {
-    // Check credentials through backend
-    final response = await AuthService.login(
-      identifier: identifier,
-      password: password,
-    );
+    setState(() => _isLoggingIn = true);
+    try {
+      // Check credentials through backend
+      final response = await AuthService.login(
+        identifier: identifier,
+        password: password,
+      );
 
-    // Get actual user returned by database
-    final user = response['user'];
-    final String username = user['username'];
+      // Get actual user returned by database
+      final user = response['user'];
+      final String username = user['username'];
 
-    // Remember logged-in user
-    UserSession.setLoggedInUser(
-      username: username,
-      token: response['access_token'] as String?,
-    );
+      // Remember logged-in user
+      UserSession.setLoggedInUser(
+        username: username,
+        token: response['access_token'] as String?,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    // Login successful → proceed
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => WelcomeGreetingScreen(
-          userName: username,
+      // Login successful → proceed
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => WelcomeGreetingScreen(
+            userName: username,
+          ),
         ),
-      ),
-    );
-  } catch (error) {
-    if (!mounted) return;
+      );
+    } catch (error) {
+      if (!mounted) return;
 
-    String message = error.toString();
+      String message = error.toString();
 
-    if (error is LoginException && error.retryAfterSeconds != null) {
-      _startLockout(error.retryAfterSeconds!);
-    }
-
-    if (error is LoginException && error.failedAttempts != null) {
-      setState(() => _failedLoginAttempts = error.failedAttempts!);
-    }
-
-    // Remove "Exception: " from displayed message
-    message = message.replaceFirst('Exception: ', '');
-
-    _showSnackBar(
-      message,
-      Colors.redAccent,
-    );
-  }
-}
-
-void _startLockout(int seconds) {
-  _lockoutTimer?.cancel();
-  setState(() {
-    _loginLockedUntil = DateTime.now().add(Duration(seconds: seconds));
-  });
-  _lockoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-    if (!mounted || !_isLoginLocked) {
-      timer.cancel();
-      if (mounted) {
-        setState(() {
-          _loginLockedUntil = null;
-          _failedLoginAttempts = 0;
-        });
+      if (error is LoginException && error.retryAfterSeconds != null) {
+        _startLockout(error.retryAfterSeconds!);
       }
-    } else {
-      setState(() {});
-    }
-  });
-}
 
-String _formatLockoutTime() {
-  final seconds = _remainingLockoutSeconds;
-  final minutes = seconds ~/ 60;
-  final remainingSeconds = seconds % 60;
-  return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-}
+      if (error is LoginException && error.failedAttempts != null) {
+        setState(() => _failedLoginAttempts = error.failedAttempts!);
+      }
+
+      _passwordController.clear();
+      setState(() => _isCaptchaChecked = false);
+
+      // Remove "Exception: " from displayed message
+      message = message.replaceFirst('Exception: ', '');
+
+      _showSnackBar(
+        message,
+        Colors.redAccent,
+      );
+    } finally {
+      if (mounted) setState(() => _isLoggingIn = false);
+    }
+  }
+
+  void _startLockout(int seconds) {
+    _lockoutTimer?.cancel();
+    setState(() {
+      _loginLockedUntil = DateTime.now().add(Duration(seconds: seconds));
+    });
+    _lockoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || !_isLoginLocked) {
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _loginLockedUntil = null;
+            _failedLoginAttempts = 0;
+          });
+        }
+      } else {
+        setState(() {});
+      }
+    });
+  }
+
+  String _formatLockoutTime() {
+    final seconds = _remainingLockoutSeconds;
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
 
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -161,8 +194,7 @@ String _formatLockoutTime() {
   // POP-UP FLOW 1: Forgot Password Sheet
   // =========================================================================
   void _showForgotPasswordSheet(BuildContext context) {
-    final TextEditingController identifierController =
-        TextEditingController();
+    final TextEditingController identifierController = TextEditingController();
 
     showModalBottomSheet(
       context: context,
@@ -238,8 +270,7 @@ String _formatLockoutTime() {
                   height: 48,
                   child: ElevatedButton(
                     onPressed: () async {
-                      final identifier =
-                          identifierController.text.trim();
+                      final identifier = identifierController.text.trim();
 
                       if (identifier.isEmpty) {
                         _showSnackBar(
@@ -256,6 +287,8 @@ String _formatLockoutTime() {
 
                         if (!mounted) return;
 
+                        _forgotSecurity.startOtpChallenge();
+
                         Navigator.pop(sheetContext);
 
                         _showVerifyCodeSheet(
@@ -271,8 +304,7 @@ String _formatLockoutTime() {
                         if (!mounted) return;
 
                         String message = error.toString();
-                        message =
-                            message.replaceFirst('Exception: ', '');
+                        message = message.replaceFirst('Exception: ', '');
 
                         _showSnackBar(
                           message,
@@ -314,8 +346,7 @@ String _formatLockoutTime() {
     final List<TextEditingController> otpControllers =
         List.generate(6, (index) => TextEditingController());
 
-    final List<FocusNode> focusNodes =
-        List.generate(6, (index) => FocusNode());
+    final List<FocusNode> focusNodes = List.generate(6, (index) => FocusNode());
 
     showModalBottomSheet(
       context: context,
@@ -363,7 +394,66 @@ String _formatLockoutTime() {
                     color: Colors.grey.shade700,
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 8),
+                AnimatedBuilder(
+                  animation: _forgotSecurity,
+                  builder: (context, _) {
+                    final locked = _forgotSecurity.isVerificationLocked;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            locked
+                                ? 'Try again in ${_forgotSecurity.format(_forgotSecurity.verificationLockRemaining)}'
+                                : 'Code expires in ${_forgotSecurity.format(_forgotSecurity.codeRemaining)} • ${_forgotSecurity.attemptsRemaining} attempts left',
+                            style: GoogleFonts.montserrat(
+                              fontSize: 10.5,
+                              color: locked
+                                  ? Colors.redAccent
+                                  : Colors.grey.shade600,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _forgotSecurity.canResend
+                              ? () async {
+                                  try {
+                                    await AuthService.requestForgotPasswordOtp(
+                                      identifier: identifier,
+                                    );
+                                    if (!mounted) return;
+                                    _forgotSecurity.recordResend();
+                                    for (final controller in otpControllers) {
+                                      controller.clear();
+                                    }
+                                    focusNodes.first.requestFocus();
+                                    _showSnackBar(
+                                      'A new verification code was sent.',
+                                      const Color(0xFF0F751B),
+                                    );
+                                  } catch (error) {
+                                    if (!mounted) return;
+                                    _showSnackBar(
+                                      error
+                                          .toString()
+                                          .replaceFirst('Exception: ', ''),
+                                      Colors.redAccent,
+                                    );
+                                  }
+                                }
+                              : null,
+                          child: Text(
+                            _forgotSecurity.canResend
+                                ? 'Resend'
+                                : 'Resend ${_forgotSecurity.format(_forgotSecurity.resendRemaining)}',
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: List.generate(6, (index) {
@@ -403,6 +493,7 @@ String _formatLockoutTime() {
                           ),
                         ),
                         onChanged: (value) {
+                          _forgotSecurity.recordActivity();
                           if (value.isNotEmpty && index < 5) {
                             focusNodes[index + 1].requestFocus();
                           } else if (value.isEmpty && index > 0) {
@@ -419,8 +510,16 @@ String _formatLockoutTime() {
                   height: 48,
                   child: ElevatedButton(
                     onPressed: () async {
-                      final code =
-                          otpControllers.map((c) => c.text).join();
+                      if (!_forgotSecurity.canVerify) {
+                        _showSnackBar(
+                          _forgotSecurity.isVerificationLocked
+                              ? 'Too many incorrect codes. Please wait for the timer.'
+                              : 'This verification code has expired.',
+                          Colors.redAccent,
+                        );
+                        return;
+                      }
+                      final code = otpControllers.map((c) => c.text).join();
 
                       if (code.length != 6) {
                         _showSnackBar(
@@ -438,6 +537,8 @@ String _formatLockoutTime() {
 
                         if (!mounted) return;
 
+                        _forgotSecurity.beginPasswordSetup();
+
                         Navigator.pop(sheetContext);
 
                         _showSetNewPasswordSheet(
@@ -452,9 +553,19 @@ String _formatLockoutTime() {
                       } catch (error) {
                         if (!mounted) return;
 
+                        final remaining = error is OtpException
+                            ? error.attemptsRemaining
+                            : null;
+                        _forgotSecurity.recordIncorrectAttempt(
+                          serverRemaining: remaining,
+                        );
+                        for (final controller in otpControllers) {
+                          controller.clear();
+                        }
+                        focusNodes.first.requestFocus();
+
                         String message = error.toString();
-                        message =
-                            message.replaceFirst('Exception: ', '');
+                        message = message.replaceFirst('Exception: ', '');
 
                         _showSnackBar(
                           message,
@@ -487,6 +598,9 @@ String _formatLockoutTime() {
       for (final focusNode in focusNodes) {
         focusNode.dispose();
       }
+      if (_forgotSecurity.stage == VerificationStage.otp) {
+        _forgotSecurity.cancel();
+      }
     });
   }
 
@@ -497,10 +611,8 @@ String _formatLockoutTime() {
     BuildContext context,
     String identifier,
   ) {
-    final TextEditingController newPassController =
-        TextEditingController();
-    final TextEditingController confirmPassController =
-        TextEditingController();
+    final TextEditingController newPassController = TextEditingController();
+    final TextEditingController confirmPassController = TextEditingController();
 
     bool isNewVisible = false;
     bool isConfirmVisible = false;
@@ -515,9 +627,8 @@ String _formatLockoutTime() {
             final text = newPassController.text;
 
             final bool hasMinLength = text.length >= 8;
-            final bool hasMixedCase =
-                text.contains(RegExp(r'[a-z]')) &&
-                    text.contains(RegExp(r'[A-Z]'));
+            final bool hasMixedCase = text.contains(RegExp(r'[a-z]')) &&
+                text.contains(RegExp(r'[A-Z]'));
             final bool hasNumber = text.contains(RegExp(r'[0-9]'));
             final bool hasSpecialChar = text.contains(
               RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-\+=~/\\\[\]]'),
@@ -533,9 +644,7 @@ String _formatLockoutTime() {
                       height: 6,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: met
-                            ? const Color(0xFF0F751B)
-                            : Colors.grey,
+                        color: met ? const Color(0xFF0F751B) : Colors.grey,
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -544,8 +653,7 @@ String _formatLockoutTime() {
                       style: GoogleFonts.montserrat(
                         fontSize: 11,
                         color: met ? Colors.black87 : Colors.black54,
-                        fontWeight:
-                            met ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight: met ? FontWeight.w600 : FontWeight.w400,
                       ),
                     ),
                   ],
@@ -561,8 +669,7 @@ String _formatLockoutTime() {
                 padding: const EdgeInsets.all(24),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius:
-                      BorderRadius.vertical(top: Radius.circular(28)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -588,6 +695,18 @@ String _formatLockoutTime() {
                           color: const Color(0xFF0F4D20),
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      AnimatedBuilder(
+                        animation: _forgotSecurity,
+                        builder: (context, _) => Text(
+                          'Session expires in ${_forgotSecurity.format(_forgotSecurity.setupRemaining)}',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 10.5,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       Text(
                         'New Password',
@@ -601,6 +720,7 @@ String _formatLockoutTime() {
                         controller: newPassController,
                         obscureText: !isNewVisible,
                         onChanged: (value) {
+                          _forgotSecurity.recordActivity();
                           setSheetState(() {});
                         },
                         decoration: InputDecoration(
@@ -613,13 +733,13 @@ String _formatLockoutTime() {
                               size: 20,
                             ),
                             onPressed: () {
+                              _forgotSecurity.recordActivity();
                               setSheetState(() {
                                 isNewVisible = !isNewVisible;
                               });
                             },
                           ),
-                          contentPadding:
-                              const EdgeInsets.symmetric(
+                          contentPadding: const EdgeInsets.symmetric(
                             horizontal: 14,
                             vertical: 12,
                           ),
@@ -657,6 +777,7 @@ String _formatLockoutTime() {
                       TextField(
                         controller: confirmPassController,
                         obscureText: !isConfirmVisible,
+                        onChanged: (_) => _forgotSecurity.recordActivity(),
                         decoration: InputDecoration(
                           hintText: 'Re-enter new password',
                           suffixIcon: IconButton(
@@ -667,14 +788,13 @@ String _formatLockoutTime() {
                               size: 20,
                             ),
                             onPressed: () {
+                              _forgotSecurity.recordActivity();
                               setSheetState(() {
-                                isConfirmVisible =
-                                    !isConfirmVisible;
+                                isConfirmVisible = !isConfirmVisible;
                               });
                             },
                           ),
-                          contentPadding:
-                              const EdgeInsets.symmetric(
+                          contentPadding: const EdgeInsets.symmetric(
                             horizontal: 14,
                             vertical: 12,
                           ),
@@ -689,10 +809,8 @@ String _formatLockoutTime() {
                         height: 48,
                         child: ElevatedButton(
                           onPressed: () async {
-                            final newPassword =
-                                newPassController.text;
-                            final confirmPassword =
-                                confirmPassController.text;
+                            final newPassword = newPassController.text;
+                            final confirmPassword = confirmPassController.text;
 
                             if (newPassword.isEmpty ||
                                 confirmPassword.isEmpty) {
@@ -753,8 +871,7 @@ String _formatLockoutTime() {
                             }
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                const Color(0xFF0F751B),
+                            backgroundColor: const Color(0xFF0F751B),
                           ),
                           child: Text(
                             'Update Password',
@@ -776,6 +893,7 @@ String _formatLockoutTime() {
     ).whenComplete(() {
       newPassController.dispose();
       confirmPassController.dispose();
+      _forgotSecurity.cancel();
     });
   }
 
@@ -1014,7 +1132,8 @@ String _formatLockoutTime() {
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (context) => const RegisterScreen()),
+                              builder: (context) => const RegisterScreen(),
+                            ),
                           ),
                           child: Text(
                             'Create new account',
@@ -1032,44 +1151,47 @@ String _formatLockoutTime() {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _isLoginLocked ? null : _handleLogin,
+                          onPressed: _isLoginLocked || _isLoggingIn
+                              ? null
+                              : _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF0F751B),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(6)),
                           ),
-                          child: Text(
-                            _isLoginLocked
-                                ? 'Try again in ${_formatLockoutTime()}'
-                                : 'Log in',
-                            style: GoogleFonts.montserrat(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white),
-                          ),
+                          child: _isLoggingIn
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  _isLoginLocked
+                                      ? 'Try again in ${_formatLockoutTime()}'
+                                      : 'Log in',
+                                  style: GoogleFonts.montserrat(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white),
+                                ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      if (_isLoginLocked)
-                        Text(
-                          'Too many login attempts. Try again in ${_formatLockoutTime()}.',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.montserrat(
-                            color: Colors.redAccent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      else if (_failedLoginAttempts > 0)
-                        Text(
-                          'Login attempt $_failedLoginAttempts of 6',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.montserrat(
-                            color: Colors.redAccent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                      if (_failedLoginAttempts > 0 && !_isLoginLocked) ...[
+                        const SizedBox(height: 6),
+                        Center(
+                          child: Text(
+                            '${(6 - _failedLoginAttempts).clamp(0, 6)} login attempts remaining',
+                            style: GoogleFonts.montserrat(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade600,
+                            ),
                           ),
                         ),
+                      ],
                     ],
                   ),
                 ),

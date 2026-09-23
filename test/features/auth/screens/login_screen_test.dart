@@ -17,37 +17,34 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
-  testWidgets('rejects an invalid reset email', (tester) async {
+  testWidgets('forgot password requires an account identifier', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1200));
     await tester.pumpWidget(buildSubject());
     await tester.tap(find.text('Forgot Password?'));
     await tester.pumpAndSettle();
 
     expect(find.text('Reset Password'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).last, 'not-an-email');
     await tester.tap(find.text('Request Reset Code'));
     await tester.pump();
 
-    expect(find.text('Please enter a valid email address.'), findsOneWidget);
+    expect(
+      find.text('Please enter your username or email.'),
+      findsOneWidget,
+    );
     expect(find.text('Reset Password'), findsOneWidget);
     await tester.binding.setSurfaceSize(null);
   });
 
-  testWidgets('valid reset email opens code verification', (tester) async {
+  testWidgets('forgot password keeps the original bottom-sheet design',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1200));
     await tester.pumpWidget(buildSubject());
     await tester.tap(find.text('Forgot Password?'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).last, 'user@example.com');
-    await tester.tap(find.text('Request Reset Code'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Verify Code'), findsOneWidget);
-    expect(
-        find.text(
-            'Enter the simulated 6-digit verification code for user@example.com.'),
-        findsOneWidget);
+    expect(find.text('Reset Password'), findsOneWidget);
+    expect(find.text('Request Reset Code'), findsOneWidget);
+    expect(find.byType(BottomSheet), findsOneWidget);
     await tester.binding.setSurfaceSize(null);
   });
 }
