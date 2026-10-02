@@ -44,7 +44,6 @@ const List<LatLng> isuEchagueMockBoundary = [
 enum NavigationUiState {
   idle,
   buildingDetails,
-  chooseStartingPoint,
   chooseRoute,
   routeDetails,
   routePreview,
@@ -60,6 +59,12 @@ class MapViewScreen extends StatefulWidget {
 }
 
 class _MapViewScreenState extends State<MapViewScreen> {
+  static const NavigationOrigin _defaultOrigin = NavigationOrigin(
+    id: 'main_gate',
+    label: 'ISU Main Gate',
+    coordinate: isuMainGateNode,
+    type: NavigationOriginType.mainGate,
+  );
   final TextEditingController _searchController = TextEditingController();
   final MapController _mapController = MapController();
   final ValueNotifier<double> _mapZoom = ValueNotifier(_initialCampusZoom);
@@ -68,12 +73,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   CampusBuilding? _selectedBuilding;
   CampusRoom? _selectedRoom;
   WalkingRoute? _walkingRoute;
-  NavigationOrigin _selectedOrigin = const NavigationOrigin(
-    id: 'main_gate',
-    label: 'ISU Main Gate',
-    coordinate: isuMainGateNode,
-    type: NavigationOriginType.mainGate,
-  );
+  NavigationOrigin _selectedOrigin = _defaultOrigin;
   RouteType _selectedRouteType = RouteType.comfortableShaded;
   TransportMode _selectedTransportMode = TransportMode.walking;
   String _selectedCategoryFilter = 'All';
@@ -112,6 +112,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
               (building) => NavigationOrigin(
                 id: building.id,
                 label: building.name,
+                acronym: building.acronym,
                 coordinate: building.coordinate,
                 type: NavigationOriginType.campusLocation,
               ),
@@ -446,7 +447,6 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
     final location = _currentUserLocation;
     if (location == null || !isuEchagueBounds.contains(location)) {
-      setState(() => _hasSelectedOrigin = false);
       return;
     }
 
@@ -592,6 +592,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         return !b.isParking;
       } else if (_selectedCategoryFilter == 'Parkings') {
         return b.isParking;
+      } else if (_selectedCategoryFilter == 'Shaded') {
+        return b.hasShadedPath;
       }
 
       return true;
@@ -828,7 +830,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
                               duration: const Duration(milliseconds: 180),
                               curve: Curves.easeOut,
                               child: Transform.translate(
-                                offset: const Offset(0, 18),
+                                // Keep the label below the entire icon, not
+                                // across its lower half at the map anchor.
+                                offset: const Offset(0, 40),
                                 child: Center(
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
@@ -1210,8 +1214,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                                   (r) => r.id == entry.roomId)
                                               .firstOrNull;
                                           _hasSelectedOrigin = false;
-                                          _navigationState = NavigationUiState
-                                              .chooseStartingPoint;
+                                          _selectedOrigin = _defaultOrigin;
+                                          _walkingRoute = null;
+                                          _navigationState =
+                                              NavigationUiState.chooseRoute;
                                         });
                                       },
                                     ),
@@ -1323,6 +1329,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                           _buildFilterChip('All', Icons.grid_view),
                           _buildFilterChip('Colleges', Icons.school),
                           _buildFilterChip('Parkings', Icons.local_parking),
+                          _buildFilterChip('Shaded', Icons.park_outlined),
                         ],
                       ),
                     ),
@@ -1512,7 +1519,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     _historySessionId = null;
                     _selectedRoom = null;
                     _hasSelectedOrigin = false;
-                    _navigationState = NavigationUiState.chooseStartingPoint;
+                    _selectedOrigin = _defaultOrigin;
+                    _walkingRoute = null;
+                    _navigationState = NavigationUiState.chooseRoute;
                   });
                 },
                 onRoomDirectionsTap: (room) {
@@ -1521,45 +1530,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     _selectedRoom = room;
                     _walkingRoute = null;
                     _hasSelectedOrigin = false;
-                    _navigationState = NavigationUiState.chooseStartingPoint;
-                  });
-                },
-              ),
-            ),
-
-          if (_selectedBuilding != null &&
-              _navigationState == NavigationUiState.chooseStartingPoint)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: ChooseStartingPointSheet(
-                destination: _selectedBuilding!,
-                destinationRoom: _selectedRoom,
-                origins: _availableOrigins,
-                selectedOrigin: _selectedOrigin,
-                hasSelectedOrigin: _hasSelectedOrigin,
-                isLocating: _isLocating,
-                locationStatus: _locationStatus,
-                isCurrentLocationInsideCampus: _currentUserLocation != null &&
-                    isuEchagueBounds.contains(_currentUserLocation!),
-                onUseCurrentLocation: _useCurrentLocationAsOrigin,
-                onOriginSelected: (origin) {
-                  setState(() {
-                    _selectedOrigin = origin;
-                    _hasSelectedOrigin = true;
-                  });
-                },
-                onBack: () {
-                  setState(() {
-                    _navigationState = NavigationUiState.buildingDetails;
-                  });
-                },
-                onCancel: _cancelDirections,
-                onContinue: () {
-                  setState(() {
-                    _historySessionId = null;
-                    _walkingRoute = null;
+                    _selectedOrigin = _defaultOrigin;
                     _navigationState = NavigationUiState.chooseRoute;
                   });
                 },
@@ -1576,6 +1547,20 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 destination: _selectedBuilding!,
                 destinationRoom: _selectedRoom,
                 origin: _selectedOrigin,
+                hasSelectedOrigin: _hasSelectedOrigin,
+                origins: _availableOrigins,
+                isLocating: _isLocating,
+                locationStatus: _locationStatus,
+                isCurrentLocationInsideCampus: _currentUserLocation != null &&
+                    isuEchagueBounds.contains(_currentUserLocation!),
+                onUseCurrentLocation: _useCurrentLocationAsOrigin,
+                onOriginSelected: (origin) {
+                  setState(() {
+                    _selectedOrigin = origin;
+                    _hasSelectedOrigin = true;
+                    _walkingRoute = null;
+                  });
+                },
                 initialRouteType: _selectedRouteType,
                 initialTransportMode: _selectedTransportMode,
                 onTransportModeChanged: (mode) {
@@ -1583,7 +1568,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 },
                 onBack: () {
                   setState(() {
-                    _navigationState = NavigationUiState.chooseStartingPoint;
+                    _navigationState = NavigationUiState.buildingDetails;
                   });
                 },
                 onCancel: _cancelDirections,
