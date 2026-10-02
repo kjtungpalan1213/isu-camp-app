@@ -50,6 +50,16 @@ void main() {
       await tester.tap(find.byIcon(Icons.add));
       await tester.pump(const Duration(milliseconds: 200));
       expect(tester.widget<AnimatedOpacity>(buildingLabel).opacity, 1);
+      final iconCircle = find.descendant(
+        of: buildingIcon,
+        matching: find.byType(AnimatedContainer),
+      );
+      final labelContainer = find.descendant(
+        of: buildingLabel,
+        matching: find.byType(Container),
+      );
+      expect(tester.getTopLeft(labelContainer.first).dy,
+          greaterThan(tester.getBottomLeft(iconCircle).dy));
       await tester.tap(find.byIcon(Icons.remove));
       await tester.pump(const Duration(milliseconds: 200));
       expect(
@@ -76,6 +86,57 @@ void main() {
                 return response.future;
               return Future.value(http.Response.bytes(tileBytes, 200,
                   headers: {'content-type': 'image/png'}));
+            }));
+  });
+
+  testWidgets('directions opens route panel without a separate origin step',
+      (tester) async {
+    final tileBytes = File('assets/images/logo_isu_png.png').readAsBytesSync();
+    var routeRequests = 0;
+    await http.runWithClient(() async {
+      await tester.binding.setSurfaceSize(const Size(430, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const MaterialApp(home: MapViewScreen()));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byKey(const ValueKey('building-icon-1')));
+      await tester.pump();
+      await tester.tap(find.text('DIRECTIONS'));
+      await tester.pump();
+      expect(find.text('CHOOSE ROUTE'), findsOneWidget);
+      expect(
+          tester
+              .widget<TextField>(
+                  find.byKey(const ValueKey('route-origin-field')))
+              .decoration!
+              .hintText,
+          'Choose starting point');
+      expect(find.text('CHOOSE STARTING POINT'), findsNothing);
+      expect(routeRequests, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+        () => MockClient((request) async {
+              if (request.url.path == '/campus/buildings') {
+                return http.Response(
+                    jsonEncode({
+                      'buildings': [
+                        {
+                          'id': '1',
+                          'name': 'Test Building',
+                          'acronym': 'TEST',
+                          'latitude': 16.7216,
+                          'longitude': 121.6917
+                        }
+                      ]
+                    }),
+                    200);
+              }
+              if (request.url.path == '/campus/routes') {
+                routeRequests++;
+                return http.Response('{"routes":[]}', 200);
+              }
+              return http.Response.bytes(tileBytes, 200,
+                  headers: {'content-type': 'image/png'});
             }));
   });
 
