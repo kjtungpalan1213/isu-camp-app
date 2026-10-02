@@ -41,12 +41,33 @@ class AuthService {
     defaultValue: 'https://api.kumpas.live',
   );
 
+  // Validation errors can contain a list of objects instead of a string.
+  // Only expose messages, never the submitted input included in those objects.
+  static String _errorMessage(dynamic data, String fallback) {
+    String? readMessage(dynamic value) {
+      if (value is String) {
+        return value.trim().isEmpty ? null : value;
+      }
+      if (value is List) {
+        final messages =
+            value.map(readMessage).whereType<String>().toSet().toList();
+        return messages.isEmpty ? null : messages.join('\n');
+      }
+      if (value is Map) {
+        return readMessage(value['msg']) ?? readMessage(value['message']);
+      }
+      return null;
+    }
+
+    return readMessage(data is Map ? data['detail'] : null) ?? fallback;
+  }
+
   static OtpException _otpException(
     http.Response response,
     Map<String, dynamic> data,
     String fallback,
   ) {
-    final message = data['detail']?.toString() ?? fallback;
+    final message = _errorMessage(data, fallback);
     final remainingMatch =
         RegExp(r'(\d+)\s+attempt\(s\)\s+remaining').firstMatch(message);
     final structuredRemaining = data['attempts_remaining'];
@@ -91,7 +112,7 @@ class AuthService {
     final failedAttempts = response.headers['x-login-attempts'];
     final remainingAttempts = response.headers['x-login-attempts-remaining'];
     throw LoginException(
-      data['detail'] ?? 'Login failed.',
+      _errorMessage(data, 'Login failed.'),
       retryAfterSeconds: retryAfter == null ? null : int.tryParse(retryAfter),
       failedAttempts:
           failedAttempts == null ? null : int.tryParse(failedAttempts),
@@ -188,7 +209,7 @@ class AuthService {
     }
 
     throw Exception(
-      data['detail'] ?? 'Failed to create account.',
+      _errorMessage(data, 'Failed to create account.'),
     );
   }
 
@@ -278,7 +299,7 @@ class AuthService {
     }
 
     throw Exception(
-      data['detail'] ?? 'Failed to reset password.',
+      _errorMessage(data, 'Failed to reset password.'),
     );
   }
 }

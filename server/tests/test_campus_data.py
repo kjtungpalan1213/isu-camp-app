@@ -1,9 +1,49 @@
 import unittest
 
-from app.utils.campus_data import building_for_map
+from app.utils.campus_data import building_for_map, photo_for_map, cover_photos_for_map
 
 
 class CampusDataTests(unittest.TestCase):
+    def test_photo_tables_choose_cover_then_position_per_owner(self):
+        rows = [
+            {"photo_id": 1, "building_id": 1, "position": 0, "content": r"\x01"},
+            {"photo_id": 2, "building_id": 1, "position": 1, "content": r"\x02", "is_cover": True},
+            {"photo_id": 3, "building_id": 2, "position": 3, "content": r"\x03"},
+            {"photo_id": 4, "building_id": 2, "position": 0, "content": r"\x04"},
+        ]
+        self.assertEqual(cover_photos_for_map(rows, "building_id"), {
+            "1": "data:image/jpeg;base64,Ag==",
+            "2": "data:image/jpeg;base64,BA==",
+        })
+
+    def test_location_cover_uses_new_mime_and_skips_invalid_content(self):
+        rows = [
+            {"photo_id": 1, "location_id": 9, "is_cover": True, "content": r"\xinvalid"},
+            {"photo_id": 2, "location_id": 9, "position": 0, "content": r"\x89504e47", "mime_type": "image/png"},
+        ]
+        self.assertEqual(cover_photos_for_map(rows, "location_id"), {
+            "9": "data:image/png;base64,iVBORw==",
+        })
+
+    def test_supabase_bytea_photo(self):
+        self.assertEqual(photo_for_map({
+            "photo": r"\xffd8ffe0", "photo_mime_type": "image/jpeg",
+        }), "data:image/jpeg;base64,/9j/4A==")
+
+    def test_binary_photo_and_missing_or_invalid_photo(self):
+        self.assertEqual(photo_for_map({
+            "photo": b"\x89PNG", "photo_mime_type": "image/png",
+        }), "data:image/png;base64,iVBORw==")
+        for photo in (None, "", r"\xinvalid"):
+            self.assertIsNone(photo_for_map({"photo": photo}))
+
+    def test_building_photo_is_returned_to_mobile(self):
+        building = building_for_map({
+            "building_id": 5, "latitude": 16.7, "longitude": 121.6,
+            "image_url": "https://example.com/building.jpg",
+        })
+        self.assertEqual(building["imageUrl"], "https://example.com/building.jpg")
+
     def test_existing_coordinates_and_schema(self):
         building = building_for_map({
             "building_id": 5, "building_name": "Infirmary",

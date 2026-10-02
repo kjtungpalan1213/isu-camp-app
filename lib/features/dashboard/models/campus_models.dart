@@ -121,6 +121,8 @@ class CampusRoom {
   final RoomCategory category;
   final String floor;
   final IconData icon;
+  final String? imageUrl;
+  final String? description;
 
   const CampusRoom({
     required this.id,
@@ -128,6 +130,8 @@ class CampusRoom {
     required this.category,
     required this.floor,
     required this.icon,
+    this.imageUrl,
+    this.description = '',
   });
 
   Map<String, dynamic> toJson() => {
@@ -135,6 +139,8 @@ class CampusRoom {
         'title': title,
         'category': category.name,
         'floor': floor,
+        'imageUrl': imageUrl,
+        'description': description,
       };
 
   factory CampusRoom.fromJson(Map<String, dynamic> json) => CampusRoom(
@@ -146,6 +152,8 @@ class CampusRoom {
         ),
         floor: json['floor'] ?? '1st Floor',
         icon: Icons.meeting_room_outlined,
+        imageUrl: json['imageUrl'],
+        description: json['description'] ?? '',
       );
 }
 

@@ -1,6 +1,44 @@
 """Translate the existing Supabase building schema for the mobile map."""
 
 import math
+import base64
+
+
+def photo_for_map(row):
+    """Convert PostgREST bytea hex photos to an image the app can display."""
+    photo = row.get("content") or row.get("photo")
+    if photo:
+        try:
+            if isinstance(photo, str) and photo.startswith("\\x"):
+                photo = bytes.fromhex(photo[2:])
+            elif isinstance(photo, (bytes, bytearray, memoryview)):
+                photo = bytes(photo)
+            else:
+                photo = None
+            if photo:
+                mime = row.get("mime_type") or row.get("photo_mime_type") or "image/jpeg"
+                return f"data:{mime};base64,{base64.b64encode(photo).decode('ascii')}"
+        except ValueError:
+            pass
+    return row.get("image_url") or row.get("imageUrl") or row.get("photo_url")
+
+
+def cover_photos_for_map(rows, owner_key):
+    """Choose a valid cover per building/location, then the earliest position."""
+    photos = {}
+    ordered = sorted(rows, key=lambda row: (
+        not bool(row.get("is_cover")),
+        row.get("position") if row.get("position") is not None else float("inf"),
+        row["photo_id"],
+    ))
+    for row in ordered:
+        owner = row.get(owner_key)
+        if owner is None or str(owner) in photos:
+            continue
+        image = photo_for_map(row)
+        if image:
+            photos[str(owner)] = image
+    return photos
 
 
 def coordinate(latitude, longitude):
@@ -34,6 +72,7 @@ def building_for_map(row):
         "acronym": row.get("building_code") or "",
         "category": classification,
         "description": row.get("description") or "",
+        "imageUrl": photo_for_map(row),
         "latitude": position[0],
         "longitude": position[1],
         "polygonCoordinates": polygon,

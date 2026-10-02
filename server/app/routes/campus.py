@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from app.database.supabase import supabase
-from app.utils.campus_data import building_for_map
+from app.utils.campus_data import building_for_map, cover_photos_for_map
 from app.utils.routing import walking_routes, RoutingError
 from pydantic import BaseModel, Field
 from typing import Literal
@@ -54,14 +54,12 @@ def get_buildings():
     try:
         building_rows = routing_rows(
             "building",
-            "building_id,building_code,building_name,description,"
-            "latitude,longitude,polygon_coordinates,classification",
+            "*",
             "building_id",
         )
         location_rows = routing_rows(
             "location",
-            "location_id,building_id,type_id,location_code,"
-            "location_name,floor_id",
+            "*",
             "location_id",
         )
         floor_rows = routing_rows(
@@ -74,6 +72,16 @@ def get_buildings():
             "type_id,type_name",
             "type_id",
         )
+        building_photos = cover_photos_for_map(routing_rows(
+            "building_photo",
+            "photo_id,building_id,position,mime_type,content,is_cover",
+            "photo_id",
+        ), "building_id")
+        location_photos = cover_photos_for_map(routing_rows(
+            "location_photo",
+            "photo_id,location_id,position,mime_type,content,is_cover",
+            "photo_id",
+        ), "location_id")
 
         floors = {str(row["floor_id"]): row for row in floor_rows}
         types = {str(row["type_id"]): row["type_name"] for row in type_rows}
@@ -118,6 +126,8 @@ def get_buildings():
                          or row.get("location_code")
                          or "Unnamed location",
                 "category": category,
+                "imageUrl": location_photos.get(str(row["location_id"])),
+                "description": row.get("description") or "",
                 "floor": floor_label(
                     floor.get("floor_number") if floor else None
                 ),
@@ -130,6 +140,8 @@ def get_buildings():
             if building is None:
                 skipped += 1
                 continue
+
+            building["imageUrl"] = building_photos.get(str(row["building_id"])) or building["imageUrl"]
 
             building["rooms"] = rooms_by_building.get(
                 str(row["building_id"]), []
