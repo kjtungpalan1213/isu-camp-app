@@ -17,6 +17,141 @@ IconData routeModeIcon(TransportMode mode) {
   }
 }
 
+class LocationPhoto extends StatelessWidget {
+  final String? imageUrl;
+  const LocationPhoto({super.key, this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final source = imageUrl?.trim();
+    Widget placeholder() => const ColoredBox(
+          color: Color(0xFFF0F4F1),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.image_outlined, size: 44, color: Color(0xFF0F5A28)),
+                SizedBox(height: 8),
+                Text('Photo unavailable'),
+              ],
+            ),
+          ),
+        );
+    if (source == null || source.isEmpty) return placeholder();
+    if (source.startsWith('data:')) {
+      try {
+        return Image.memory(
+          UriData.parse(source).contentAsBytes(),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => placeholder(),
+        );
+      } on FormatException {
+        return placeholder();
+      }
+    }
+    final uri = Uri.tryParse(source);
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      return Image.network(
+        source,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : const Center(child: CircularProgressIndicator()),
+        errorBuilder: (_, __, ___) => placeholder(),
+      );
+    }
+    return Image.asset(source,
+        fit: BoxFit.cover, errorBuilder: (_, __, ___) => placeholder());
+  }
+}
+
+class IndoorLocationDetailsDialog extends StatelessWidget {
+  final CampusBuilding building;
+  final CampusRoom room;
+  const IndoorLocationDetailsDialog({
+    super.key,
+    required this.building,
+    required this.room,
+  });
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 480,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 20, right: 8, top: 8),
+                child: Row(children: [
+                  const Expanded(
+                      child: Text('LOCATION DETAILS',
+                          style: TextStyle(fontWeight: FontWeight.bold))),
+                  IconButton(
+                    tooltip: 'Close details',
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(Icons.close),
+                  ),
+                ]),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: SizedBox(
+                            height: 180,
+                            width: double.infinity,
+                            child: LocationPhoto(
+                              imageUrl: room.imageUrl,
+                            )),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(room.title,
+                          style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F5A28))),
+                      const SizedBox(height: 12),
+                      Text('Building: ${building.name}'),
+                      const SizedBox(height: 6),
+                      Text('Floor: ${room.floor}'),
+                      const SizedBox(height: 6),
+                      Text('Room name: ${room.title}'),
+                      if (room.description?.isNotEmpty ?? false) ...[
+                        const SizedBox(height: 12),
+                        Text(room.description!),
+                      ],
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => Navigator.pop(context, true),
+                          icon: const Icon(Icons.directions),
+                          label: const Text('Get Directions'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0F5A28),
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
 IconData routeInstructionIcon(String instruction) {
   final normalized = instruction.toLowerCase();
   if (normalized.contains('left')) return Icons.turn_left;
@@ -236,17 +371,7 @@ class BuildingDetailsSheet extends StatelessWidget {
                 height: 160,
                 width: double.infinity,
                 color: Colors.grey.shade200,
-                child: Image.asset(
-                  building.imageUrl ?? 'assets/images/Appdev_background1.png',
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Center(
-                    child: Icon(
-                      building.isParking ? Icons.local_parking : Icons.school,
-                      size: 54,
-                      color: const Color(0xFF0F751B),
-                    ),
-                  ),
-                ),
+                child: LocationPhoto(imageUrl: building.imageUrl),
               ),
             ),
 
@@ -427,9 +552,20 @@ class BuildingDetailsSheet extends StatelessWidget {
                               ),
                             ),
                             TextButton.icon(
-                              onPressed: () => onRoomDirectionsTap(room),
-                              icon: const Icon(Icons.directions, size: 16),
-                              label: const Text('Get directions'),
+                              onPressed: () async {
+                                final navigate = await showDialog<bool>(
+                                  context: context,
+                                  builder: (_) => IndoorLocationDetailsDialog(
+                                    building: building,
+                                    room: room,
+                                  ),
+                                );
+                                if (navigate == true && context.mounted) {
+                                  onRoomDirectionsTap(room);
+                                }
+                              },
+                              icon: const Icon(Icons.info_outline, size: 16),
+                              label: const Text('Details'),
                               style: TextButton.styleFrom(
                                 foregroundColor: const Color(0xFF0F5A28),
                                 padding: const EdgeInsets.symmetric(

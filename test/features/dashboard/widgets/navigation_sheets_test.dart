@@ -5,6 +5,52 @@ import 'package:isu_camp_app/features/dashboard/widgets/navigation_sheets.dart';
 import 'package:latlong2/latlong.dart';
 
 void main() {
+  testWidgets('indoor photo never falls back to the building photo',
+      (tester) async {
+    const building = CampusBuilding(
+      id: 'building-photo',
+      name: 'Building',
+      acronym: 'B',
+      category: 'Academic',
+      description: '',
+      coordinate: LatLng(16, 121),
+      imageUrl: 'assets/building.jpg',
+    );
+    for (final photo in <String?>[null, 'assets/room.jpg']) {
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+        body: IndoorLocationDetailsDialog(
+          building: building,
+          room: CampusRoom(
+              id: 'room',
+              title: 'Room',
+              category: RoomCategory.room,
+              floor: 'Ground Floor',
+              icon: Icons.meeting_room,
+              imageUrl: photo),
+        ),
+      )));
+      await tester.pumpAndSettle();
+      expect(tester.widget<LocationPhoto>(find.byType(LocationPhoto)).imageUrl,
+          photo);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('database photo data is displayed as a memory image',
+      (tester) async {
+    const photo = 'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+      body: SizedBox(height: 180, child: LocationPhoto(imageUrl: photo)),
+    )));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Image>(find.byType(Image)).image, isA<MemoryImage>());
+    expect(find.text('Photo unavailable'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   const origin = NavigationOrigin(
     id: 'origin',
     label: 'Mock Origin',
@@ -46,6 +92,59 @@ void main() {
     expect(routeModeIcon(TransportMode.motorcycle), Icons.two_wheeler);
     expect(routeModeIcon(TransportMode.bicycle), Icons.pedal_bike);
     expect(routeModeIcon(TransportMode.walking), Icons.directions_walk);
+  });
+
+  testWidgets('indoor details show building and floor before directions',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    CampusRoom? selected;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+      body: BuildingDetailsSheet(
+        building: destination,
+        onDirectionsTap: () {},
+        onRoomDirectionsTap: (room) => selected = room,
+      ),
+    )));
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    expect(find.text('Building: Mock Destination'), findsOneWidget);
+    expect(find.text('Floor: 1st Floor'), findsOneWidget);
+    expect(find.text('Room name: Room 1'), findsOneWidget);
+    expect(selected, isNull);
+    await tester.tap(find.byTooltip('Close details'));
+    await tester.pumpAndSettle();
+    expect(find.byType(IndoorLocationDetailsDialog), findsNothing);
+    expect(selected, isNull);
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Get Directions'));
+    await tester.pumpAndSettle();
+    expect(selected, destination.rooms.first);
+    expect(find.byType(IndoorLocationDetailsDialog), findsNothing);
+  });
+
+  testWidgets('location details tolerate a null room description',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+      body: IndoorLocationDetailsDialog(
+        building: destination,
+        room: const CampusRoom(
+          id: 'legacy-room',
+          title: 'Legacy Room',
+          category: RoomCategory.room,
+          floor: 'Ground Floor',
+          icon: Icons.meeting_room,
+          description: null,
+        ),
+      ),
+    )));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Room name: Legacy Room'), findsOneWidget);
+    expect(find.text('Get Directions'), findsOneWidget);
   });
 
   testWidgets(
