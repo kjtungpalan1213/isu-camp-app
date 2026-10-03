@@ -102,12 +102,14 @@ enum NavigationOriginType {
 class NavigationOrigin {
   final String id;
   final String label;
+  final String? acronym;
   final LatLng coordinate;
   final NavigationOriginType type;
 
   const NavigationOrigin({
     required this.id,
     required this.label,
+    this.acronym,
     required this.coordinate,
     required this.type,
   });

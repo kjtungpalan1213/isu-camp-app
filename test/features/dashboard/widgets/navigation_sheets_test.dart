@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:isu_camp_app/features/dashboard/models/campus_models.dart';
 import 'package:isu_camp_app/features/dashboard/widgets/navigation_sheets.dart';
 import 'package:latlong2/latlong.dart';
@@ -83,7 +85,15 @@ void main() {
   const buildingOrigin = NavigationOrigin(
     id: 'college_of_medicine',
     label: 'College of Medicine',
+    acronym: 'COM',
     coordinate: LatLng(16.7201, 121.6902),
+    type: NavigationOriginType.campusLocation,
+  );
+  const libraryOrigin = NavigationOrigin(
+    id: 'main_library',
+    label: 'Main Library',
+    acronym: 'ML',
+    coordinate: LatLng(16.7212, 121.6911),
     type: NavigationOriginType.campusLocation,
   );
 
@@ -262,75 +272,102 @@ void main() {
     expect(walkingMinutes, greaterThanOrEqualTo(bicycleMinutes));
   });
 
-  testWidgets('starting point shows current location and expandable buildings',
+  testWidgets('route panel chooses a building before requesting a route',
       (tester) async {
     NavigationOrigin? selected;
+    var requests = 0;
     await tester.binding.setSurfaceSize(const Size(430, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    await tester.pumpWidget(
-      MaterialApp(
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(
         home: Scaffold(
-          body: Align(
-            alignment: Alignment.bottomCenter,
-            child: ChooseStartingPointSheet(
+          body: StatefulBuilder(
+            builder: (context, update) => ChooseRouteSheet(
               destination: destination,
-              origins: const [currentLocation, buildingOrigin],
-              selectedOrigin: origin,
-              hasSelectedOrigin: false,
-              isLocating: false,
-              locationStatus: null,
+              origin: selected ?? origin,
+              hasSelectedOrigin: selected != null,
+              origins: const [currentLocation, buildingOrigin, libraryOrigin],
               isCurrentLocationInsideCampus: true,
               onUseCurrentLocation: () async {},
-              onOriginSelected: (value) => selected = value,
+              onOriginSelected: (value) => update(() => selected = value),
               onBack: () {},
               onCancel: () {},
-              onContinue: () {},
+              onViewRoute: (_, __) {},
             ),
           ),
         ),
-      ),
-    );
-
-    expect(find.text('Use My Current Location'), findsOneWidget);
-    expect(find.text('Others'), findsOneWidget);
-    expect(find.text('College of Medicine'), findsNothing);
-
-    final continueButton = tester.widget<ElevatedButton>(
-      find.widgetWithText(ElevatedButton, 'Continue to Route Options'),
-    );
-    expect(continueButton.onPressed, isNull);
-
-    await tester.tap(find.text('Others'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('College of Medicine'),
-      120,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('College of Medicine'), findsOneWidget);
-
-    await tester.tap(find.text('College of Medicine'));
-    await tester.pump();
-    expect(selected?.id, 'college_of_medicine');
+      ));
+      expect(requests, 0);
+      expect(
+          tester
+              .widget<TextField>(
+                  find.byKey(const ValueKey('route-origin-field')))
+              .decoration!
+              .hintText,
+          'Choose starting point');
+      expect(find.text('CHOOSE STARTING POINT'), findsNothing);
+      expect(
+          tester
+              .widget<ElevatedButton>(
+                  find.widgetWithText(ElevatedButton, 'View Route'))
+              .onPressed,
+          isNull);
+      final search = find.byKey(const ValueKey('route-origin-field'));
+      await tester.tap(search);
+      await tester.pump();
+      expect(find.text('Use My Current Location'), findsOneWidget);
+      await tester.enterText(search, 'com');
+      await tester.pump();
+      expect(find.text('College of Medicine'), findsOneWidget);
+      expect(find.text('Main Library'), findsNothing);
+      expect(requests, 0);
+      await tester.enterText(search, 'library');
+      await tester.pump();
+      expect(find.text('Main Library'), findsOneWidget);
+      expect(find.text('College of Medicine'), findsNothing);
+      await tester.enterText(search, 'unknown');
+      await tester.pump();
+      expect(find.text('No buildings found.'), findsOneWidget);
+      expect(find.text('Use My Current Location'), findsOneWidget);
+      await tester.enterText(search, '');
+      await tester.pump();
+      await tester.tap(find.text('Others'));
+      await tester.pump();
+      expect(find.text('College of Medicine'), findsOneWidget);
+      expect(find.text('Main Library'), findsOneWidget);
+      await tester.enterText(search, 'medicine');
+      await tester.pump();
+      await tester.ensureVisible(find.text('College of Medicine'));
+      await tester.tap(find.text('College of Medicine'));
+      await tester.pump();
+      expect(selected?.id, 'college_of_medicine');
+      expect(requests, 1);
+      expect(find.text('Use My Current Location'), findsNothing);
+      expect(tester.widget<TextField>(search).controller?.text,
+          'College of Medicine');
+      expect(tester.takeException(), isNull);
+    },
+        () => MockClient((request) async {
+              requests++;
+              return http.Response('{"routes":[]}', 200);
+            }));
   });
 
-  testWidgets('outside-campus current location shows an error', (tester) async {
+  testWidgets('outside-campus selection keeps route unavailable',
+      (tester) async {
     var attempts = 0;
     await tester.binding.setSurfaceSize(const Size(430, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: Align(
             alignment: Alignment.bottomCenter,
-            child: ChooseStartingPointSheet(
+            child: ChooseRouteSheet(
               destination: destination,
-              origins: const [currentLocation, buildingOrigin],
-              selectedOrigin: origin,
+              origin: origin,
               hasSelectedOrigin: false,
-              isLocating: false,
+              origins: const [buildingOrigin],
               locationStatus:
                   'You are outside the supported ISU Echague campus area.',
               isCurrentLocationInsideCampus: false,
@@ -338,21 +375,67 @@ void main() {
               onOriginSelected: (_) {},
               onBack: () {},
               onCancel: () {},
-              onContinue: () {},
+              onViewRoute: (_, __) {},
             ),
           ),
         ),
       ),
     );
-
+    await tester.tap(find.byKey(const ValueKey('route-origin-field')));
+    await tester.pump();
     await tester.tap(find.text('Use My Current Location'));
     await tester.pump();
-
     expect(attempts, 1);
     expect(
       find.text('You are outside the supported ISU Echague campus area.'),
       findsOneWidget,
     );
+    expect(
+        tester
+            .widget<ElevatedButton>(
+                find.widgetWithText(ElevatedButton, 'View Route'))
+            .onPressed,
+        isNull);
+  });
+
+  testWidgets('current location selection refreshes route in the same panel',
+      (tester) async {
+    NavigationOrigin? selected;
+    var requests = 0;
+    await tester.binding.setSurfaceSize(const Size(430, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, update) => ChooseRouteSheet(
+              destination: destination,
+              origin: selected ?? origin,
+              hasSelectedOrigin: selected != null,
+              isCurrentLocationInsideCampus: true,
+              onUseCurrentLocation: () async {
+                update(() => selected = currentLocation);
+              },
+              onBack: () {},
+              onCancel: () {},
+              onViewRoute: (_, __) {},
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.byKey(const ValueKey('route-origin-field')));
+      await tester.pump();
+      await tester.tap(find.text('Use My Current Location'));
+      await tester.pump();
+      expect(find.text('My Current Location'), findsOneWidget);
+      expect(find.text('Use My Current Location'), findsNothing);
+      expect(requests, 1);
+      expect(tester.takeException(), isNull);
+    },
+        () => MockClient((request) async {
+              requests++;
+              return http.Response('{"routes":[]}', 200);
+            }));
   });
 
   testWidgets('route preview shows step details and navigation controls',

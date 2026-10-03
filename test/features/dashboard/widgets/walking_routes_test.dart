@@ -55,9 +55,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('100 m'), findsOneWidget);
       expect(find.text('150 m'), findsOneWidget);
+      await tester.ensureVisible(find.text('View Route'));
+      await tester.pump();
       await tester.tap(find.text('View Route'));
       expect(selected?.type, RouteType.comfortableShaded);
       expect(selected?.distanceMeters, 150);
+      await tester.ensureVisible(find.byIcon(Icons.directions_car));
+      await tester.pump();
       await tester.tap(find.byIcon(Icons.directions_car));
       await tester.pump();
       expect(changedMode, TransportMode.car);
