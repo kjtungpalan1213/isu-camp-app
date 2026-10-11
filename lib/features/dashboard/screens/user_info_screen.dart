@@ -9,6 +9,7 @@ import '../../auth/services/remembered_session_store.dart';
 import '../data/campus_dataset.dart';
 import '../models/navigation_history.dart';
 import '../services/navigation_history_service.dart';
+import '../widgets/edit_profile_sheet.dart';
 import 'about_us_screen.dart';
 
 // =========================================================================
@@ -27,6 +28,20 @@ class UserInfoScreen extends StatefulWidget {
 }
 
 class _UserInfoScreenState extends State<UserInfoScreen> {
+  Future<void> _editProfile() async {
+    await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      builder: (_) => const EditProfileSheet(),
+    );
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final username = UserSession.currentUsername;
@@ -48,25 +63,43 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
                     height: 250,
                     width: double.infinity,
                     decoration: const BoxDecoration(
-                      color: Colors.white,
+                      color: Color(0xFF0B351E),
                     ),
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.asset(
-                          'assets/images/Appdev_background1.png',
+                        // Crop only the campus portion; the source includes a white lower panel.
+                        ClipRect(
+                            child: FittedBox(
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              Container(color: Colors.grey.shade200),
-                        ),
+                          alignment: Alignment.topCenter,
+                          child: SizedBox(
+                            width: 390,
+                            height: 360,
+                            child: ClipRect(
+                                child: OverflowBox(
+                              alignment: Alignment.topCenter,
+                              minHeight: 844,
+                              maxHeight: 844,
+                              child: Image.asset(
+                                  'assets/images/Appdev_background1.png',
+                                  width: 390,
+                                  height: 844,
+                                  fit: BoxFit.fill,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const ColoredBox(
+                                          color: Color(0xFF0B351E))),
+                            )),
+                          ),
+                        )),
                         Container(
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                Colors.white.withValues(alpha: 0.90),
-                                Colors.white.withValues(alpha: 0.45),
+                                const Color(0xFF0B351E).withValues(alpha: 0.15),
+                                const Color(0xFF0B351E).withValues(alpha: 0.95),
                               ],
                             ),
                           ),
@@ -87,7 +120,7 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
                                   style: GoogleFonts.montserrat(
                                     fontSize: 16.5,
                                     fontWeight: FontWeight.bold,
-                                    color: Colors.black87,
+                                    color: Colors.white,
                                   ),
                                 ),
                               ),
@@ -134,15 +167,26 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
 
             const SizedBox(height: 58),
 
-            // 2. Dynamic Username Text from Authentication
-            Text(
-              username,
-              style: GoogleFonts.montserrat(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-                letterSpacing: 0.4,
-              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child:
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Flexible(
+                    child: Text(username,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.montserrat(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 0.4))),
+                IconButton(
+                    key: const ValueKey('edit_profile'),
+                    tooltip: 'Edit profile',
+                    onPressed: _editProfile,
+                    icon: const Icon(Icons.edit_outlined,
+                        color: Colors.white, size: 20)),
+              ]),
             ),
 
             const SizedBox(height: 28),
@@ -991,7 +1035,7 @@ class _HistorySubScreenState extends State<_HistorySubScreen> {
       backgroundColor: const Color(0xFFF5F8F6),
       appBar: AppBar(
         title: const Text('History'),
-        backgroundColor: const Color(0xFF0F751B),
+        backgroundColor: const Color.fromARGB(255, 5, 38, 9),
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -1062,7 +1106,8 @@ class _HistorySubScreenState extends State<_HistorySubScreen> {
                                         children: [
                                           Row(children: [
                                             const Icon(Icons.location_on,
-                                                color: Color(0xFF0F751B)),
+                                                color: Color.fromARGB(
+                                                    255, 7, 57, 13)),
                                             const SizedBox(width: 10),
                                             Expanded(
                                                 child: Text(
@@ -1101,8 +1146,8 @@ class _HistorySubScreenState extends State<_HistorySubScreen> {
                                                     'Get directions'),
                                                 style: OutlinedButton.styleFrom(
                                                     foregroundColor:
-                                                        const Color(
-                                                            0xFF0F751B)),
+                                                        const Color.fromARGB(
+                                                            255, 8, 77, 17)),
                                               )),
                                         ],
                                       )));

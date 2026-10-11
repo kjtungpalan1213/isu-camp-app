@@ -10,6 +10,7 @@ from pwdlib import PasswordHash
 from app.database.supabase import supabase
 from app.utils.email import send_otp_email
 from app.utils.session import issue_session
+from app.utils.captcha import verify_captcha
 
 
 router = APIRouter(
@@ -89,11 +90,12 @@ def _invalid_login(identifier: str):
 class LoginRequest(BaseModel):
     identifier: str
     password: str
+    captcha_token: str = ''
 
 
 @router.post("/login")
 def login(data: LoginRequest):
-
+    verify_captcha(data.captcha_token)
     identifier = data.identifier.strip()
 
     remaining_lockout = _remaining_lockout(identifier)
