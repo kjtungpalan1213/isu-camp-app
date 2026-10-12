@@ -8,14 +8,14 @@ terminal (requires the server virtual environment and configured `server/.env`):
 
 ```powershell
 cd server
-.\venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 From the repository root, use the address for your target device:
 
 ```powershell
 # Web or desktop, backend on this machine
-flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8000
+flutter run -d chrome --web-port=5173 --dart-define=API_BASE_URL=http://localhost:8000
 
 # Android emulator, backend on the host machine
 flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:8000
@@ -33,9 +33,8 @@ hot reload. To explicitly select the live API, pass
 
 Without the override, Android uses `http://10.0.2.2:8000`; web and desktop use
 `http://localhost:8000`. For local browser development, select
-`Chrome - local backend` in VS Code or run `flutter run -d chrome`.
-To use the deployed backend, select `App - live backend` in VS Code or pass
-`--dart-define=API_BASE_URL=https://api.kumpas.live`. The deployed API
-currently requires a CAPTCHA token that this checkout does not generate. Local
-development uses the matching repository backend; production login still needs
-the deployed backend and CAPTCHA integration to be aligned.
+`ISU-CAMP (Chrome)` or `ISU-CAMP (Edge)` in VS Code, both on port 5173.
+To use the deployed backend, pass
+`--dart-define=API_BASE_URL=https://api.kumpas.live`. Login now uses real reCAPTCHA
+with backend token verification. Configure the provider keys and deploy the matching
+backend routes before using these flows. See [CAPTCHA and profile setup](server/ACCOUNT_SETUP.md).
