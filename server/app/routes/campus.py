@@ -1,15 +1,51 @@
 import logging
+import hashlib
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Path, Request, Response
 
 from app.database.supabase import supabase
-from app.utils.campus_data import building_for_map, cover_photos_for_map
+from app.utils.campus_data import building_for_map, cover_photos_for_map, photo_content
 from app.utils.routing import campus_routes, RoutingError
 from pydantic import BaseModel, Field
 from typing import Literal
 
 router = APIRouter(prefix="/campus", tags=["Campus"])
 logger = logging.getLogger(__name__)
+
+PHOTO_TABLES = {"building": "building_photo", "location": "location_photo"}
+PHOTO_MIME_TYPES = {
+    "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif",
+    "image/bmp", "image/x-icon", "image/vnd.microsoft.icon",
+}
+
+
+@router.get("/photos/{source}/{photo_id}", name="get_campus_photo")
+def get_photo(request: Request, source: Literal["building", "location"],
+              photo_id: int = Path(gt=0)):
+    """Serve one photo under the same public access policy as the campus map."""
+    try:
+        rows = (supabase.table(PHOTO_TABLES[source])
+                .select("content,mime_type").eq("photo_id", photo_id)
+                .limit(1).execute().data or [])
+        if not rows:
+            raise HTTPException(404, "Campus photo not found.")
+        content = photo_content(rows[0])
+        mime = rows[0].get("mime_type")
+        if not content or mime not in PHOTO_MIME_TYPES:
+            raise HTTPException(404, "Campus photo is unavailable.")
+        etag = '"' + hashlib.sha256(content).hexdigest() + '"'
+        headers = {"Cache-Control": "public, max-age=300", "ETag": etag,
+                   "X-Content-Type-Options": "nosniff"}
+        validators = [tag.strip().removeprefix("W/")
+                      for tag in request.headers.get("if-none-match", "").split(",")]
+        if etag in validators or "*" in validators:
+            return Response(status_code=304, headers=headers)
+        return Response(content=content, media_type=mime, headers=headers)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Could not load campus photo")
+        raise HTTPException(503, "Campus photos are temporarily unavailable.") from None
 
 
 class RouteOrigin(BaseModel):
@@ -50,16 +86,16 @@ def get_routes(request: RouteRequest):
 
 
 @router.get("/buildings")
-def get_buildings():
+def get_buildings(request: Request):
     try:
         building_rows = routing_rows(
             "building",
-            "*",
+            "building_id,building_name,building_code,classification,description,latitude,longitude,polygon_coordinates",
             "building_id",
         )
         location_rows = routing_rows(
             "location",
-            "*",
+            "location_id,building_id,floor_id,type_id,location_name,location_code,description",
             "location_id",
         )
         floor_rows = routing_rows(
@@ -74,14 +110,16 @@ def get_buildings():
         )
         building_photos = cover_photos_for_map(routing_rows(
             "building_photo",
-            "photo_id,building_id,position,mime_type,content,is_cover",
+            "photo_id,building_id,position,is_cover",
             "photo_id",
-        ), "building_id")
+        ), "building_id", lambda photo_id: str(request.url_for(
+            "get_campus_photo", source="building", photo_id=str(photo_id))))
         location_photos = cover_photos_for_map(routing_rows(
             "location_photo",
-            "photo_id,location_id,position,mime_type,content,is_cover",
+            "photo_id,location_id,position,is_cover",
             "photo_id",
-        ), "location_id")
+        ), "location_id", lambda photo_id: str(request.url_for(
+            "get_campus_photo", source="location", photo_id=str(photo_id))))
 
         floors = {str(row["floor_id"]): row for row in floor_rows}
         types = {str(row["type_id"]): row["type_name"] for row in type_rows}

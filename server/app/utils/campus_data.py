@@ -1,32 +1,34 @@
 """Translate the existing Supabase building schema for the mobile map."""
 
 import math
-import base64
 
 
 def photo_for_map(row):
-    """Convert PostgREST bytea hex photos to an image the app can display."""
-    photo = row.get("content") or row.get("photo")
-    if photo:
-        try:
-            if isinstance(photo, str) and photo.startswith("\\x"):
-                photo = bytes.fromhex(photo[2:])
-            elif isinstance(photo, (bytes, bytearray, memoryview)):
-                photo = bytes(photo)
-            else:
-                photo = None
-            if photo:
-                mime = row.get("mime_type") or row.get("photo_mime_type") or "image/jpeg"
-                return f"data:{mime};base64,{base64.b64encode(photo).decode('ascii')}"
-        except ValueError:
-            pass
-    return row.get("image_url") or row.get("imageUrl") or row.get("photo_url")
+    """Preserve legacy network URLs without ever embedding image bytes."""
+    for key in ("image_url", "imageUrl", "photo_url"):
+        url = row.get(key)
+        if isinstance(url, str) and url.lower().startswith(("http://", "https://")):
+            return url
+    return None
 
 
-def cover_photos_for_map(rows, owner_key):
-    """Choose a valid cover per building/location, then the earliest position."""
+def photo_content(row):
+    """Decode one stored PostgREST bytea value for the image endpoint."""
+    content = row.get("content")
+    try:
+        if isinstance(content, str) and content.startswith("\\x"):
+            return bytes.fromhex(content[2:]) or None
+        if isinstance(content, (bytes, bytearray, memoryview)):
+            return bytes(content) or None
+    except ValueError:
+        pass
+    return None
+
+
+def cover_photos_for_map(rows, owner_key, url_for_photo):
+    """Choose cover metadata per owner without reading or encoding content."""
     photos = {}
-    ordered = sorted(rows, key=lambda row: (
+    ordered = sorted((row for row in rows if row.get("photo_id") is not None), key=lambda row: (
         not bool(row.get("is_cover")),
         row.get("position") if row.get("position") is not None else float("inf"),
         row["photo_id"],
@@ -35,9 +37,7 @@ def cover_photos_for_map(rows, owner_key):
         owner = row.get(owner_key)
         if owner is None or str(owner) in photos:
             continue
-        image = photo_for_map(row)
-        if image:
-            photos[str(owner)] = image
+        photos[str(owner)] = url_for_photo(row["photo_id"])
     return photos
 
 
