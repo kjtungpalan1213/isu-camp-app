@@ -38,3 +38,11 @@ To use the deployed backend, pass
 `--dart-define=API_BASE_URL=https://api.kumpas.live`. Login now uses real reCAPTCHA
 with backend token verification. Configure the provider keys and deploy the matching
 backend routes before using these flows. See [CAPTCHA and profile setup](server/ACCOUNT_SETUP.md).
+
+Campus buildings and rooms return photo URLs instead of embedded image bytes.
+The public `/campus/photos/building/{photo_id}` and
+`/campus/photos/location/{photo_id}` routes serve individual stored images with
+their image content type, five-minute caching, and ETag revalidation. Deploy the
+updated backend to enable these URLs. When running behind a reverse proxy,
+preserve the external Host and configure trusted forwarded HTTPS headers so the
+returned URLs use the same public API origin as the app.
