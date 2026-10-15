@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
+import '../../offline/services/offline_pack_service.dart';
 import '../models/campus_models.dart';
 import '../models/navigation_progress.dart';
 import '../services/campus_service.dart';
@@ -59,6 +60,15 @@ class LocationPhoto extends StatelessWidget {
     }
     final uri = Uri.tryParse(source);
     if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      // A downloaded photo shows instantly and works with no connection.
+      final downloaded = OfflinePackService.instance.photoImage(source);
+      if (downloaded != null) {
+        return Image(
+          image: downloaded,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => placeholder(),
+        );
+      }
       return Image.network(
         source,
         fit: BoxFit.cover,

@@ -10,6 +10,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../auth/services/user_session.dart';
+import '../../offline/services/offline_pack_service.dart';
+import '../../offline/services/offline_tile_provider.dart';
+import '../../offline/widgets/offline_update_banner.dart';
 import '../data/campus_dataset.dart';
 import '../models/building_marker_style.dart';
 import '../models/campus_models.dart';
@@ -31,16 +34,17 @@ double buildingLabelOpacity(double zoom) =>
 double buildingIconOpacity(double zoom, {bool isSelected = false}) =>
     isSelected ? 1.0 : ((zoom - 15.5) / 0.8).clamp(0.0, 1.0);
 
+// Shared with the offline tile download so the cache covers the whole camera.
 final LatLngBounds isuEchagueBounds = LatLngBounds(
-  const LatLng(16.7120, 121.6830),
-  const LatLng(16.7310, 121.7010),
+  const LatLng(isuCampusSouth, isuCampusWest),
+  const LatLng(isuCampusNorth, isuCampusEast),
 );
 
 const List<LatLng> isuEchagueMockBoundary = [
-  LatLng(16.7120, 121.6830),
-  LatLng(16.7120, 121.7010),
-  LatLng(16.7310, 121.7010),
-  LatLng(16.7310, 121.6830),
+  LatLng(isuCampusSouth, isuCampusWest),
+  LatLng(isuCampusSouth, isuCampusEast),
+  LatLng(isuCampusNorth, isuCampusEast),
+  LatLng(isuCampusNorth, isuCampusWest),
 ];
 
 enum NavigationUiState {
@@ -90,6 +94,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   bool _hasSelectedOrigin = false;
   bool _isLoadingBuildings = true;
   String? _buildingsError;
+  bool _offlineUpdateDismissed = false;
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
   double? _movementHeading;
@@ -259,11 +264,26 @@ class _MapViewScreenState extends State<MapViewScreen> {
   @override
   void initState() {
     super.initState();
+    OfflinePackService.instance.addListener(_onOfflinePackChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadBuildings();
       _initializeCurrentLocation();
+      _checkOfflineMapUpdate();
     });
+  }
+
+  void _onOfflinePackChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Asks the backend once per session whether the stored map is stale. A new
+  /// version is only announced; the user chooses whether to download it.
+  Future<void> _checkOfflineMapUpdate() async {
+    final pack = OfflinePackService.instance;
+    await pack.load();
+    if (!pack.status.isReady) return;
+    await pack.checkForUpdate();
   }
 
   Future<void> _loadBuildings() async {
@@ -291,6 +311,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   @override
   void dispose() {
+    OfflinePackService.instance.removeListener(_onOfflinePackChanged);
     _searchController.dispose();
     _followTimer?.cancel();
     _navigationPosition.dispose();
@@ -932,10 +953,15 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 },
               ),
               children: [
-                // OpenStreetMap Tile Layer
+                // OpenStreetMap tiles, served from the offline pack when
+                // one is downloaded. The key rebuilds the layer after a
+                // download so freshly cached tiles are picked up.
                 TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.isucamp.app',
+                  key: ValueKey(
+                      'tiles-${OfflinePackService.instance.status.installedVersion ?? 'live'}'),
+                  urlTemplate: campusTileUrlTemplate,
+                  userAgentPackageName: campusTileUserAgent,
+                  tileProvider: OfflineAwareTileProvider(),
                 ),
 
                 PolygonLayer(
@@ -1317,6 +1343,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                       ),
                   ],
                 ),
+              ),
+            ),
+
+          // Update notice for a downloaded map. Never starts a download.
+          if (hasOfflineUpdate() &&
+              !_offlineUpdateDismissed &&
+              _navigationState == NavigationUiState.idle)
+            Positioned(
+              key: const ValueKey('offline-update-banner'),
+              left: 16,
+              right: 16,
+              bottom: 24,
+              child: OfflineUpdateBanner(
+                onDismiss: () =>
+                    setState(() => _offlineUpdateDismissed = true),
               ),
             ),
 
