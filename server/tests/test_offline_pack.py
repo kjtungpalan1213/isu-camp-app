@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -48,6 +49,22 @@ class OfflinePackTests(unittest.TestCase):
         first = self.publish()
         self.bundle['generatedAt'] = 'new clock value'
         self.assertEqual(first, self.publish())
+
+    @unittest.skipUnless(os.name == 'posix', 'Separate container users use POSIX permissions')
+    def test_published_pack_is_readable_by_a_separate_api_user_with_private_builder_umask(self):
+        previous = os.umask(0o077)
+        try:
+            manifest = self.publish()
+        finally:
+            os.umask(previous)
+        snapshot = self.store.root / manifest['version']
+        # Check every traversal/read permission, including the atomic pointer
+        # and TemporaryDirectory root that otherwise default to private modes.
+        for path in [self.store.root / 'current', snapshot, *snapshot.rglob('*')]:
+            mode = path.stat().st_mode
+            self.assertTrue(mode & 0o004, str(path))
+            if path.is_dir():
+                self.assertTrue(mode & 0o001, str(path))
 
     def test_each_source_content_change_changes_version_and_retains_old_files(self):
         first = self.publish()

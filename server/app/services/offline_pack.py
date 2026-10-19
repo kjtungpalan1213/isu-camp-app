@@ -45,6 +45,8 @@ def campus_tile_paths(min_zoom=15, max_zoom=19):
 def _write_payload(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('wb') as stream:
+        # Pack assets are public downloads, shared with a separate API user.
+        os.fchmod(stream.fileno(), 0o644)
         stream.write(content)
         stream.flush()
         os.fsync(stream.fileno())
@@ -141,7 +143,9 @@ class OfflinePackStore:
                 _write_payload(staging / "manifest.json", encode_json(manifest))
                 for directory in sorted((p for p in staging.rglob('*') if p.is_dir()),
                                         key=lambda p: len(p.parts), reverse=True):
+                    directory.chmod(0o755)
                     _sync_directory(directory)
+                staging.chmod(0o755)
                 _sync_directory(staging)
                 # Concurrent identical builds may already have published it.
                 try:
@@ -154,6 +158,7 @@ class OfflinePackStore:
         fd, pointer = tempfile.mkstemp(prefix=".current-", dir=self.root)
         try:
             with os.fdopen(fd, "w") as stream:
+                os.fchmod(stream.fileno(), 0o644)
                 stream.write(version)
                 stream.flush()
                 os.fsync(stream.fileno())
