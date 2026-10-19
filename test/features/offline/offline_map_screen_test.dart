@@ -41,6 +41,7 @@ class _ProgressPack extends OfflinePackService {
   OfflinePackStatus snapshot = const OfflinePackStatus(
     state: OfflinePackState.downloading,
     bytesOnDisk: 13 * 1024 * 1024,
+    totalBytes: 32 * 1024 * 1024,
     bytesInFlight: 512 * 1024,
     completedFiles: 123,
     totalFiles: 456,
@@ -123,17 +124,17 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: OfflineMapScreen(pack: pack)));
     await tester.pump();
 
-    expect(subtitle(tester), '13.5 MB downloaded');
+    expect(subtitle(tester), '13.5 MB / 32.0 MB');
     expect(
         tester
             .widget<LinearProgressIndicator>(
                 find.byType(LinearProgressIndicator))
             .value,
-        isNull);
+        13.5 / 32);
 
     pack.show(pack.status.copyWith(bytesInFlight: 1024 * 1024));
     await tester.pump();
-    expect(subtitle(tester), '14.0 MB downloaded');
+    expect(subtitle(tester), '14.0 MB / 32.0 MB');
 
     pack.show(pack.status.copyWith(
       state: OfflinePackState.incomplete,
@@ -141,13 +142,13 @@ void main() {
       bytesInFlight: 0,
     ));
     await tester.pump();
-    expect(subtitle(tester), '14.0 MB downloaded • Paused');
+    expect(subtitle(tester), '14.0 MB / 32.0 MB • Paused');
     expect(
         tester
             .widget<LinearProgressIndicator>(
                 find.byType(LinearProgressIndicator))
             .value,
-        0);
+        14 / 32);
     expect(find.byKey(const ValueKey('offline-resume-button')), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     pack.dispose();
@@ -218,6 +219,9 @@ void main() {
         final url = request.url.toString();
         if (url.endsWith('/campus/offline/bundle')) {
           return http.Response(jsonEncode(_bundle('v1')), 200);
+        }
+        if (request.method == 'HEAD') {
+          return http.Response.bytes([1, 2, 3, 4], 200);
         }
         if (url.contains('tile.openstreetmap.org')) {
           pack.pause();

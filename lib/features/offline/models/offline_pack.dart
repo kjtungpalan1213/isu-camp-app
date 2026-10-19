@@ -31,6 +31,10 @@ class OfflinePackStatus {
   final int totalFiles;
   final int bytesOnDisk;
 
+  /// Size of the complete pack, including files already saved. Null while
+  /// checking resource sizes or when opening an older unfinished download.
+  final int? totalBytes;
+
   /// Received bytes in files that have not yet been committed to disk.
   final int bytesInFlight;
   final DateTime? installedAt;
@@ -46,6 +50,7 @@ class OfflinePackStatus {
     this.completedFiles = 0,
     this.totalFiles = 0,
     this.bytesOnDisk = 0,
+    this.totalBytes,
     this.bytesInFlight = 0,
     this.installedAt,
     this.lastCheckedAt,
@@ -62,13 +67,17 @@ class OfflinePackStatus {
       updateVersion != null &&
       updateVersion != installedVersion;
 
-  double get progress =>
-      totalFiles == 0 ? 0 : (completedFiles / totalFiles).clamp(0.0, 1.0);
+  double get progress => totalBytes == null || totalBytes! <= 0
+      ? 0
+      : (downloadedBytes / totalBytes!).clamp(0.0, 1.0);
 
   int get downloadedBytes => bytesOnDisk + bytesInFlight;
 
   String get downloadSizeLabel => _formatBytes(downloadedBytes);
   String get sizeLabel => _formatBytes(bytesOnDisk);
+  String get downloadProgressLabel => totalBytes == null
+      ? '$downloadSizeLabel downloaded'
+      : '$downloadSizeLabel / ${_formatBytes(totalBytes!)}';
 
   static String _formatBytes(int bytes) =>
       '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -80,6 +89,7 @@ class OfflinePackStatus {
     int? completedFiles,
     int? totalFiles,
     int? bytesOnDisk,
+    int? totalBytes,
     int? bytesInFlight,
     DateTime? installedAt,
     DateTime? lastCheckedAt,
@@ -87,6 +97,7 @@ class OfflinePackStatus {
     bool clearInstalledVersion = false,
     bool clearUpdateVersion = false,
     bool clearMessage = false,
+    bool clearTotalBytes = false,
   }) =>
       OfflinePackStatus(
         state: state ?? this.state,
@@ -98,6 +109,7 @@ class OfflinePackStatus {
         completedFiles: completedFiles ?? this.completedFiles,
         totalFiles: totalFiles ?? this.totalFiles,
         bytesOnDisk: bytesOnDisk ?? this.bytesOnDisk,
+        totalBytes: clearTotalBytes ? null : totalBytes ?? this.totalBytes,
         bytesInFlight: bytesInFlight ?? this.bytesInFlight,
         installedAt: installedAt ?? this.installedAt,
         lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,

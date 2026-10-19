@@ -92,6 +92,7 @@ Map<String, dynamic> _bundle(String version,
 /// Records what the app asked for, so a test can prove what it did not ask for.
 class _Recorder {
   final List<String> requests = [];
+  final List<String> sizeRequests = [];
 
   int get bundleRequests =>
       requests.where((url) => url.endsWith('/offline/bundle')).length;
@@ -127,6 +128,12 @@ void main() {
     var tiles = 0;
     return MockClient((request) async {
       final url = request.url.toString();
+      if (request.method == 'HEAD') {
+        recorder.sizeRequests.add(url);
+        return http.Response.bytes(
+            url.contains('tile.openstreetmap.org') ? [1, 2, 3, 4] : [1, 2, 3],
+            200);
+      }
       recorder.requests.add(url);
       if (url.endsWith('/campus/offline/bundle')) {
         return http.Response(jsonEncode(_bundle(version, name: name)), 200);
@@ -163,7 +170,8 @@ void main() {
     expect(service.status.completedFiles, _totalFiles);
     expect(service.status.message, isNull);
     expect(service.status.bytesOnDisk, greaterThan(0));
-    expect(service.status.sizeLabel, isNot('0 MB'));
+    expect(service.status.totalBytes, service.status.bytesOnDisk);
+    expect(service.status.progress, 1);
 
     expect(recorder.bundleRequests, 1);
     expect(recorder.photoRequests, _photoCount);
@@ -176,6 +184,49 @@ void main() {
     expect(service.tileImage(15, 27459, 14838), isNotNull);
     expect(service.tileImage(19, 439357, 237452), isNotNull);
     expect(service.tileImage(19, 1, 1), isNull);
+  });
+
+  for (final headStatus in [200, 403, 405]) {
+    test('missing HEAD size ($headStatus) downloads each payload only once',
+        () async {
+      final gets = <String, int>{};
+      final service = OfflinePackService(
+        store: OfflineFileStore(rootPath: root.path),
+        baseUrl: () => _baseUrl,
+        maxTileZoom: 15,
+        client: MockClient.streaming((request, _) async {
+          if (request.method == 'HEAD') {
+            return http.StreamedResponse(const Stream.empty(), headStatus);
+          }
+          final path = request.url.path;
+          gets.update(path, (count) => count + 1, ifAbsent: () => 1);
+          return http.StreamedResponse(
+              Stream.value(path.endsWith('/offline/bundle')
+                  ? utf8.encode(jsonEncode(_bundle('v1')))
+                  : [1, 2, 3]),
+              200);
+        }),
+      );
+      await service.download();
+      expect(service.status.isReady, isTrue);
+      expect(service.status.totalBytes, service.status.bytesOnDisk);
+      expect(service.status.progress, 1);
+      expect(gets.values, everyElement(1));
+      expect(gets.length, 1 + _photoCount + 9);
+    });
+  }
+
+  test('pack bytes exclude resume metadata and abandoned partial files',
+      () async {
+    final service = serviceFor(backend('v1'));
+    await service.download();
+    final savedBytes = service.status.bytesOnDisk;
+    await File('${root.path}/abandoned.part')
+        .writeAsBytes(List.filled(65536, 1));
+    final restarted = serviceFor(backend('v1'));
+    await restarted.load();
+    expect(restarted.status.bytesOnDisk, savedBytes);
+    expect(restarted.status.totalBytes, savedBytes);
   });
 
   for (final fail in [false, true]) {
@@ -199,6 +250,11 @@ void main() {
         maxTileZoom: 15,
         baseUrl: () => _baseUrl,
         client: MockClient.streaming((request, _) async {
+          if (request.method == 'HEAD') {
+            return http.StreamedResponse(const Stream.empty(), 200,
+                contentLength:
+                    request.url.toString() == _buildingPhoto ? 256 * 1024 : 3);
+          }
           if (request.url.path.endsWith('/offline/bundle')) {
             return http.StreamedResponse(
                 Stream.value(utf8.encode(jsonEncode(_bundle('v1')))), 200);
@@ -238,6 +294,7 @@ void main() {
         expect(service.status.bytesOnDisk,
             inInclusiveRange(payloadBytes, payloadBytes + 1024));
         expect(service.photoImage(_buildingPhoto), isNotNull);
+        expect(service.status.totalBytes, service.status.bytesOnDisk);
       }
     });
   }
@@ -349,12 +406,15 @@ void main() {
     expect(service.status.completedFiles, lessThan(_totalFiles));
     expect(service.status.completedFiles, greaterThan(_photoCount));
     expect(service.status.message, contains('Paused'));
+    final expectedTotal = service.status.totalBytes;
+    expect(expectedTotal, greaterThan(service.status.bytesOnDisk));
     final savedBytes = service.status.bytesOnDisk;
     expect(service.status.bytesInFlight, 0);
     final downloadedSoFar = recorder.tileRequests;
     expect(downloadedSoFar, lessThan(_tileCount));
 
     recorder.requests.clear();
+    final measuredBeforeResume = recorder.sizeRequests.length;
     final resumedBytes = <int>[];
     service.addListener(() {
       if (service.status.isBusy)
@@ -363,6 +423,8 @@ void main() {
     await service.download();
 
     expect(resumedBytes.first, savedBytes);
+    expect(recorder.sizeRequests.length, measuredBeforeResume,
+        reason: 'known sizes are reused when resuming');
     expect(service.status.state, OfflinePackState.ready);
     expect(service.status.completedFiles, _totalFiles);
     expect(recorder.photoRequests, 0, reason: 'photos were already stored');
@@ -383,6 +445,8 @@ void main() {
     expect(restarted.status.state, OfflinePackState.incomplete);
     expect(restarted.status.installedVersion, 'v1');
     expect(restarted.status.message, contains('Resume'));
+    expect(restarted.status.totalBytes, service.status.totalBytes);
+    expect(restarted.status.bytesOnDisk, service.status.bytesOnDisk);
   });
 
   test('a failing tile host stops the download instead of hammering it',

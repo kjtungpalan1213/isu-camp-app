@@ -74,6 +74,7 @@ class OfflinePackService extends ChangeNotifier {
   List<CampusBuilding>? _buildings;
   bool _pauseRequested = false;
   final Map<String, int> _receivedBytes = {};
+  final Map<String, int> _fileSizes = {};
   final Stopwatch _progressClock = Stopwatch()..start();
   int _lastProgressAt = -100;
   Timer? _progressTimer;
@@ -107,13 +108,25 @@ class OfflinePackService extends ChangeNotifier {
     }
     _adoptBundle(bundle);
     final complete = meta['complete'] == true;
+    _fileSizes.clear();
+    final savedSizes = meta['fileSizes'];
+    if (savedSizes is Map) {
+      for (final entry in savedSizes.entries) {
+        if (entry.key is String && entry.value is num && entry.value > 0) {
+          _fileSizes[entry.key as String] = (entry.value as num).toInt();
+        }
+      }
+    }
+    final storedBytes = await _store.bytesOnDisk();
     _update(OfflinePackStatus(
       state: complete ? OfflinePackState.ready : OfflinePackState.incomplete,
       installedVersion: meta['version'] as String?,
       updateVersion: meta['updateVersion'] as String?,
       completedFiles: (meta['completedFiles'] as num?)?.toInt() ?? 0,
       totalFiles: (meta['totalFiles'] as num?)?.toInt() ?? 0,
-      bytesOnDisk: await _store.bytesOnDisk(),
+      bytesOnDisk: storedBytes,
+      totalBytes:
+          complete ? storedBytes : (meta['totalBytes'] as num?)?.toInt(),
       installedAt: DateTime.tryParse(meta['installedAt'] as String? ?? ''),
       lastCheckedAt: DateTime.tryParse(meta['lastCheckedAt'] as String? ?? ''),
       message: complete
@@ -179,6 +192,7 @@ class OfflinePackService extends ChangeNotifier {
     await _store.deleteAll();
     _bundle = null;
     _buildings = null;
+    _fileSizes.clear();
     _update(const OfflinePackStatus());
   }
 
@@ -189,8 +203,11 @@ class OfflinePackService extends ChangeNotifier {
     }
     _pauseRequested = false;
     final resumeState = _status.state;
+    final previousTotal = _status.totalBytes;
     _update(_status.copyWith(
-        state: OfflinePackState.downloading, clearMessage: true));
+        state: OfflinePackState.downloading,
+        clearTotalBytes: true,
+        clearMessage: true));
 
     final Map<String, dynamic> bundle;
     try {
@@ -209,6 +226,7 @@ class OfflinePackService extends ChangeNotifier {
         // Keep whatever was stored: a half-finished pack must not be
         // reported as ready just because the update attempt failed.
         state: resumeState,
+        totalBytes: previousTotal,
         message: error is _DownloadFailure
             ? error.message
             : 'Could not reach the campus server. Check your connection and try again.',
@@ -221,6 +239,7 @@ class OfflinePackService extends ChangeNotifier {
     // photos go with the dataset they came from. Map tiles do not.
     if (version != null && version != _status.installedVersion) {
       await _store.deletePrefix('photos/');
+      _fileSizes.removeWhere((path, _) => path.startsWith('photos/'));
     }
     await _store.writeText(_bundlePath, jsonEncode(bundle));
     _adoptBundle(bundle);
@@ -260,9 +279,24 @@ class OfflinePackService extends ChangeNotifier {
     await _writeMeta(
         complete: work.isEmpty, generatedAt: bundle['generatedAt']);
 
+    final sizesReady = await _prepareDownloadSizes(work);
+    final remaining =
+        work.entries.where((entry) => !_store.contains(entry.key)).toList();
+    completed = total - remaining.length;
+    _update(_status.copyWith(
+      completedFiles: completed,
+      totalBytes: sizesReady
+          ? _status.bytesOnDisk +
+              remaining.fold<int>(
+                  0, (sum, entry) => sum + _fileSizes[entry.key]!)
+          : null,
+    ));
+    await _writeMeta(
+        complete: remaining.isEmpty, generatedAt: bundle['generatedAt']);
+
     var failures = 0;
     var checkpoint = completed;
-    final pending = work.entries.toList();
+    final pending = sizesReady ? remaining : <MapEntry<String, Uri>>[];
     for (var start = 0;
         start < pending.length && !_pauseRequested && failures < _failureBudget;
         start += _parallelDownloads) {
@@ -288,11 +322,13 @@ class OfflinePackService extends ChangeNotifier {
 
     final missing = work.keys.where((path) => !_store.contains(path)).length;
     final complete = missing == 0;
+    final storedBytes = await _store.bytesOnDisk();
     _update(_status.copyWith(
       state: complete ? OfflinePackState.ready : OfflinePackState.incomplete,
       completedFiles: total - missing,
       totalFiles: total,
-      bytesOnDisk: await _store.bytesOnDisk(),
+      bytesOnDisk: storedBytes,
+      totalBytes: complete ? storedBytes : null,
       installedAt: complete ? DateTime.now() : _status.installedAt,
       message: complete
           ? null
@@ -305,21 +341,94 @@ class OfflinePackService extends ChangeNotifier {
     await _writeMeta(complete: complete, generatedAt: bundle['generatedAt']);
   }
 
+  /// Resolve a stable denominator before showing byte-based progress. HEAD
+  /// avoids downloading tile payloads twice. Hosts without size metadata are
+  /// fetched once here and their completed files are reused by the main loop.
+  Future<bool> _prepareDownloadSizes(Map<String, Uri> work) async {
+    final unknown = work.entries
+        .where((entry) =>
+            !_store.contains(entry.key) && !_fileSizes.containsKey(entry.key))
+        .toList();
+    var failures = 0;
+    for (var start = 0;
+        start < unknown.length && !_pauseRequested && failures < _failureBudget;
+        start += _parallelDownloads) {
+      final results = await Future.wait(unknown
+          .skip(start)
+          .take(_parallelDownloads)
+          .map((entry) => _measureFile(entry.key, entry.value)));
+      for (final measured in results) {
+        failures = measured ? 0 : failures + 1;
+      }
+      if ((start + _parallelDownloads) % _checkpointEvery == 0) {
+        await _writeMeta(complete: false);
+      }
+    }
+    return work.keys
+        .every((path) => _store.contains(path) || _fileSizes.containsKey(path));
+  }
+
+  Future<bool> _measureFile(String path, Uri url) async {
+    try {
+      final response = await _http
+          .send(http.Request('HEAD', url)
+            ..headers.addAll({
+              'User-Agent': campusDownloadUserAgent,
+              'Accept-Encoding': 'identity',
+            }))
+          .timeout(const Duration(seconds: 20));
+      final length = response.contentLength;
+      await response.stream.timeout(const Duration(seconds: 20)).drain<void>();
+      if (response.statusCode == 200 && length != null && length > 0) {
+        _fileSizes[path] = length;
+        return true;
+      }
+      if (response.statusCode == 403 ||
+          response.statusCode == 405 ||
+          response.statusCode == 501 ||
+          response.statusCode == 200) {
+        return await _fetchInto(path, url);
+      }
+    } catch (_) {
+      // A failed size check remains resumable, just like a failed transfer.
+    }
+    return false;
+  }
+
+  void _recordSize(String path, int length) {
+    final previous = _fileSizes[path];
+    _fileSizes[path] = length;
+    if (_status.totalBytes != null && previous != null && previous != length) {
+      _update(_status.copyWith(
+        totalBytes: _status.totalBytes! + length - previous,
+      ));
+    }
+  }
+
   /// Keeps concurrent transfers separate so chunks are counted exactly once.
   Future<Uint8List> _receive(String path, Uri url, Duration timeout) async {
     final response = await _http
         .send(http.Request('GET', url)
-          ..headers['User-Agent'] = campusDownloadUserAgent)
+          ..headers.addAll({
+            'User-Agent': campusDownloadUserAgent,
+            'Accept-Encoding': 'identity',
+          }))
         .timeout(timeout);
     if (response.statusCode != 200) {
       await response.stream.drain<void>().timeout(timeout);
       throw const _DownloadFailure(
           'The offline map is not available right now. Try again later.');
     }
+    if (response.contentLength != null && response.contentLength! > 0) {
+      _recordSize(path, response.contentLength!);
+    }
     final bytes = BytesBuilder(copy: false);
     await for (final chunk in response.stream.timeout(timeout)) {
       bytes.add(chunk);
       _receivedBytes[path] = bytes.length;
+      if (_fileSizes.containsKey(path) && bytes.length > _fileSizes[path]!) {
+        _recordSize(path, bytes.length);
+      }
       _publishTransferProgress();
     }
     if (bytes.isEmpty) throw const _DownloadFailure('Empty download.');
@@ -351,6 +460,7 @@ class OfflinePackService extends ChangeNotifier {
       final bytes = await _receive(path, url, const Duration(seconds: 30));
       await _store.write(path, bytes);
       savedBytes = bytes.length;
+      _recordSize(path, savedBytes);
       return true;
     } catch (_) {
       return false;
@@ -408,6 +518,8 @@ class OfflinePackService extends ChangeNotifier {
           'complete': complete,
           'completedFiles': _status.completedFiles,
           'totalFiles': _status.totalFiles,
+          'totalBytes': _status.totalBytes,
+          'fileSizes': _fileSizes,
           'installedAt': _status.installedAt?.toIso8601String(),
           'updateVersion': _status.updateVersion,
           'lastCheckedAt': _status.lastCheckedAt?.toIso8601String(),

@@ -321,8 +321,11 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(6),
               child: LinearProgressIndicator(
-                // A file-count ratio is not a byte total. Keep paused bars still.
-                value: status.isBusy ? null : 0,
+                value: status.totalBytes != null
+                    ? status.progress
+                    : status.isBusy
+                        ? null
+                        : 0,
                 minHeight: 6,
                 backgroundColor: Colors.white24,
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -353,9 +356,11 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
       case OfflinePackState.absent:
         return 'Map, campus data, and photos';
       case OfflinePackState.downloading:
-        return '${status.downloadSizeLabel} downloaded';
+        return status.totalBytes == null
+            ? 'Calculating download size…'
+            : status.downloadProgressLabel;
       case OfflinePackState.incomplete:
-        return '${status.sizeLabel} downloaded • Paused';
+        return '${status.downloadProgressLabel} • Paused';
       case OfflinePackState.ready:
         return '${status.sizeLabel} • Offline Ready';
     }

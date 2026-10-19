@@ -34,8 +34,8 @@ class OfflineFileStore {
         ..addAll(await root
             .list(recursive: true, followLinks: false)
             .where((entity) => entity is File)
-            .map((entity) => p.url.joinAll(
-                p.split(p.relative(entity.path, from: _rootPath!))))
+            .map((entity) => p.url
+                .joinAll(p.split(p.relative(entity.path, from: _rootPath!))))
             .toSet());
       _isOpen = true;
       return true;
@@ -80,9 +80,10 @@ class OfflineFileStore {
     if (!_isOpen) return 0;
     var total = 0;
     try {
-      await for (final entity
-          in Directory(_rootPath!).list(recursive: true, followLinks: false)) {
-        if (entity is File) total += await entity.length();
+      // Resume metadata and interrupted staging files are not pack payload.
+      for (final path in _storedPaths.toList()) {
+        if (path == 'meta.json' || path.endsWith('.part')) continue;
+        total += await File(_absolute(path)).length();
       }
     } catch (_) {
       return total;
@@ -93,7 +94,8 @@ class OfflineFileStore {
   /// Removes every cached file whose key starts with [prefix].
   Future<void> deletePrefix(String prefix) async {
     if (!_isOpen) return;
-    for (final path in _storedPaths.where((p) => p.startsWith(prefix)).toList()) {
+    for (final path
+        in _storedPaths.where((p) => p.startsWith(prefix)).toList()) {
       try {
         await File(_absolute(path)).delete();
       } catch (_) {
@@ -111,5 +113,6 @@ class OfflineFileStore {
     await root.create(recursive: true);
   }
 
-  String _absolute(String path) => p.joinAll([_rootPath!, ...p.url.split(path)]);
+  String _absolute(String path) =>
+      p.joinAll([_rootPath!, ...p.url.split(path)]);
 }
