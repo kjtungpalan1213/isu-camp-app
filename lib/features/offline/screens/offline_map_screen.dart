@@ -65,15 +65,15 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     await _pack.download(update: update);
     if (!mounted) return;
     final status = _pack.status;
-    if (status.isReady) {
+    if (status.message != null) {
+      _notify(status.message!, Colors.red.shade700);
+    } else if (status.isReady) {
       _notify(
         wasInstalled
             ? 'Campus map updated. Offline navigation is using the new data.'
             : 'Campus map downloaded. Offline navigation is now active.',
         const Color(0xFF0F751B),
       );
-    } else if (status.message != null) {
-      _notify(status.message!, Colors.red.shade700);
     }
   }
 

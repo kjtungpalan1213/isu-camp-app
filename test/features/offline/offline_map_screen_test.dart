@@ -58,6 +58,24 @@ class _ProgressPack extends OfflinePackService {
   }
 }
 
+class _UnavailableUpdatePack extends _ProgressPack {
+  _UnavailableUpdatePack() {
+    snapshot = const OfflinePackStatus(
+        state: OfflinePackState.ready,
+        installedVersion: 'v1',
+        updateVersion: 'v2');
+  }
+
+  @override
+  Future<bool> checkForUpdate() async => true;
+
+  @override
+  Future<void> download({bool update = false}) async {
+    show(status.copyWith(
+        message: 'The offline map pack is being prepared. Try again later.'));
+  }
+}
+
 void main() {
   late Directory root;
   late List<String> requests;
@@ -254,5 +272,19 @@ void main() {
     expect(pack.status.isReady, isTrue);
     expect(pack.status.installedVersion, 'v1');
     expect(find.byKey(const ValueKey('offline-delete-button')), findsOneWidget);
+  });
+  testWidgets('an unavailable published update is not reported as successful',
+      (tester) async {
+    final pack = _UnavailableUpdatePack();
+    await tester.pumpWidget(MaterialApp(home: OfflineMapScreen(pack: pack)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download update'));
+    await tester.pumpAndSettle();
+    expect(pack.status.isReady, isTrue, reason: 'the old pack is still usable');
+    expect(
+        find.text(
+            'Campus map updated. Offline navigation is using the new data.'),
+        findsNothing);
+    expect(find.textContaining('being prepared'), findsWidgets);
   });
 }
