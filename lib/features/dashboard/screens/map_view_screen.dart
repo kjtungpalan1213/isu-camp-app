@@ -10,6 +10,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../auth/services/user_session.dart';
+import '../../offline/services/offline_pack_service.dart';
+import '../../offline/services/offline_tile_provider.dart';
+import '../../offline/widgets/offline_update_banner.dart';
 import '../data/campus_dataset.dart';
 import '../models/building_marker_style.dart';
 import '../models/campus_models.dart';
@@ -19,6 +22,7 @@ import '../models/navigation_heading.dart';
 import '../models/navigation_progress.dart';
 import '../services/campus_service.dart';
 import '../services/navigation_history_service.dart';
+import '../widgets/location_puck.dart';
 import '../widgets/navigation_sheets.dart';
 import 'user_info_screen.dart';
 
@@ -31,16 +35,17 @@ double buildingLabelOpacity(double zoom) =>
 double buildingIconOpacity(double zoom, {bool isSelected = false}) =>
     isSelected ? 1.0 : ((zoom - 15.5) / 0.8).clamp(0.0, 1.0);
 
+// Shared with the offline tile download so the cache covers the whole camera.
 final LatLngBounds isuEchagueBounds = LatLngBounds(
-  const LatLng(16.7120, 121.6830),
-  const LatLng(16.7310, 121.7010),
+  const LatLng(isuCampusSouth, isuCampusWest),
+  const LatLng(isuCampusNorth, isuCampusEast),
 );
 
 const List<LatLng> isuEchagueMockBoundary = [
-  LatLng(16.7120, 121.6830),
-  LatLng(16.7120, 121.7010),
-  LatLng(16.7310, 121.7010),
-  LatLng(16.7310, 121.6830),
+  LatLng(isuCampusSouth, isuCampusWest),
+  LatLng(isuCampusSouth, isuCampusEast),
+  LatLng(isuCampusNorth, isuCampusEast),
+  LatLng(isuCampusNorth, isuCampusWest),
 ];
 
 enum NavigationUiState {
@@ -90,10 +95,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
   bool _hasSelectedOrigin = false;
   bool _isLoadingBuildings = true;
   String? _buildingsError;
+  bool _offlineUpdateDismissed = false;
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
   double? _movementHeading;
-  double? _deviceHeading;
+  // Smoothed compass heading; drives the location cone and walking arrow.
+  final ValueNotifier<double?> _deviceHeading = ValueNotifier(null);
+  // Where the navigation camera faces: the route ahead, not the phone.
+  double? _cameraHeading;
   DateTime? _lastNavigationCameraUpdate;
   bool _followNavigationCamera = true;
   // Last GPS fix motion, used to move the camera smoothly between fixes.
@@ -259,11 +268,26 @@ class _MapViewScreenState extends State<MapViewScreen> {
   @override
   void initState() {
     super.initState();
+    OfflinePackService.instance.addListener(_onOfflinePackChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadBuildings();
       _initializeCurrentLocation();
+      _checkOfflineMapUpdate();
     });
+  }
+
+  void _onOfflinePackChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Asks the backend once per session whether the stored map is stale. A new
+  /// version is only announced; the user chooses whether to download it.
+  Future<void> _checkOfflineMapUpdate() async {
+    final pack = OfflinePackService.instance;
+    await pack.load();
+    if (!pack.status.isReady) return;
+    await pack.checkForUpdate();
   }
 
   Future<void> _loadBuildings() async {
@@ -291,10 +315,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   @override
   void dispose() {
+    OfflinePackService.instance.removeListener(_onOfflinePackChanged);
     _searchController.dispose();
     _followTimer?.cancel();
     _navigationPosition.dispose();
     _navigationHeading.dispose();
+    _deviceHeading.dispose();
     _positionSubscription?.cancel();
     _gpsWatchdog?.cancel();
     _compassSubscription?.cancel();
@@ -425,6 +451,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       }
     });
 
+    _startCompass();
     _refreshNavigationProgress(countFix: true);
 
     if (_navigationState == NavigationUiState.navigating &&
@@ -435,9 +462,16 @@ class _MapViewScreenState extends State<MapViewScreen> {
     }
   }
 
-  void _startCompassTracking() {
-    _followTimer ??= Timer.periodic(
-        const Duration(milliseconds: 100), (_) => _followTick());
+  /// Navigation ticks, plus the compass for the walking arrow.
+  void _startFollowing() {
+    _followTimer ??=
+        Timer.periodic(const Duration(milliseconds: 100), (_) => _followTick());
+    _startCompass();
+  }
+
+  /// Runs for as long as the screen is open: the location cone uses it
+  /// outside navigation too.
+  void _startCompass() {
     if (_compassSubscription != null ||
         kIsWeb ||
         (defaultTargetPlatform != TargetPlatform.android &&
@@ -452,8 +486,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         if (!mounted || heading == null || !heading.isFinite || heading < 0) {
           return;
         }
-        // The marker and camera read this through _navigationHeading.
-        _deviceHeading = smoothHeading(_deviceHeading, heading);
+        _deviceHeading.value = smoothHeading(_deviceHeading.value, heading);
+        if (_navigationState != NavigationUiState.navigating) return;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _updateNavigationCamera();
         });
@@ -461,23 +495,22 @@ class _MapViewScreenState extends State<MapViewScreen> {
       onError: (_) {
         _compassSubscription?.cancel();
         _compassSubscription = null;
+        _deviceHeading.value = null;
       },
     );
   }
 
-  void _stopCompassTracking() {
-    _compassSubscription?.cancel();
-    _compassSubscription = null;
+  void _stopFollowing() {
     _followTimer?.cancel();
     _followTimer = null;
-    _deviceHeading = null;
+    _cameraHeading = null;
     _navigationHeading.value = null;
     _lastNavigationCameraUpdate = null;
   }
 
   /// Compass when walking or still; GPS course at vehicle speeds.
   double? get _facingHeading => navigationFacing(
-      compassHeading: _deviceHeading,
+      compassHeading: _deviceHeading.value,
       gpsCourse: _fixCourse ?? _movementHeading,
       speed: _fixSpeed);
 
@@ -499,8 +532,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _updateNavigationCamera(force: true);
   }
 
-  /// Updates the navigation heading and, while following, turns the map so
-  /// that heading points up.
+  /// Points the walking arrow where the phone faces and, while following,
+  /// turns the map so the route ahead points up.
   void _updateNavigationCamera({bool force = false}) {
     final location = _currentUserLocation;
     if (!mounted ||
@@ -516,19 +549,23 @@ class _MapViewScreenState extends State<MapViewScreen> {
       return;
     }
     _lastNavigationCameraUpdate = now;
-    final target =
-        _facingHeading ?? routeHeading(_routePoints, location) ?? 0;
-    final heading =
-        smoothHeading(_navigationHeading.value, target, factor: 0.35);
-    _navigationHeading.value = heading;
+    final position = _navigationPosition.value ?? location;
+    final cameraTarget = navigationCameraHeading(_routePoints, position,
+            gpsCourse: _fixCourse ?? _movementHeading) ??
+        0;
+    _cameraHeading = smoothHeading(_cameraHeading, cameraTarget, factor: 0.2);
+    final facing = _facingHeading;
+    _navigationHeading.value = facing == null
+        ? _cameraHeading
+        : smoothHeading(_navigationHeading.value, facing, factor: 0.35);
     if (!_followNavigationCamera) return;
-    _mapController.moveAndRotate(_navigationPosition.value ?? location, 18.5,
-        cameraRotationForHeading(heading));
+    _mapController.moveAndRotate(
+        position, 18.5, cameraRotationForHeading(_cameraHeading!));
   }
 
   void _resumeNavigationFollowing() {
     setState(() => _followNavigationCamera = true);
-    _startCompassTracking();
+    _startFollowing();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _updateNavigationCamera(force: true);
     });
@@ -559,7 +596,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   }
 
   void _cancelDirections() {
-    _stopCompassTracking();
+    _stopFollowing();
     _gpsWatchdog?.cancel();
     _navigationGeneration++;
     setState(() {
@@ -651,7 +688,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     });
     await _reroute(force: true);
     if (!mounted || _navigationState != NavigationUiState.navigating) return;
-    _startCompassTracking();
+    _startFollowing();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _updateNavigationCamera(force: true);
     });
@@ -689,7 +726,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _arrivalFixes = progress.arrived ? _arrivalFixes + 1 : 0;
     if (_arrivalFixes >= 2) {
       _gpsWatchdog?.cancel();
-      _stopCompassTracking();
+      _stopFollowing();
       _navigationGeneration++;
       setState(() => _navigationState = NavigationUiState.arrived);
       return;
@@ -932,10 +969,15 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 },
               ),
               children: [
-                // OpenStreetMap Tile Layer
+                // OpenStreetMap tiles, served from the offline pack when
+                // one is downloaded. The key rebuilds the layer after a
+                // download so freshly cached tiles are picked up.
                 TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.isucamp.app',
+                  key: ValueKey(
+                      'tiles-${OfflinePackService.instance.status.installedVersion ?? 'live'}'),
+                  urlTemplate: campusTileUrlTemplate,
+                  userAgentPackageName: campusTileUserAgent,
+                  tileProvider: OfflineAwareTileProvider(),
                 ),
 
                 PolygonLayer(
@@ -1112,13 +1154,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     builder: (context, _) => MarkerLayer(
                       markers: [
                         Marker(
-                          point: _navigationState ==
-                                  NavigationUiState.navigating
-                              ? _navigationPosition.value ??
-                                  _currentUserLocation ??
-                                  _selectedOrigin.coordinate
-                              : _walkingRoute?.points.first ??
-                                  _selectedOrigin.coordinate,
+                          point:
+                              _navigationState == NavigationUiState.navigating
+                                  ? _navigationPosition.value ??
+                                      _currentUserLocation ??
+                                      _selectedOrigin.coordinate
+                                  : _walkingRoute?.points.first ??
+                                      _selectedOrigin.coordinate,
                           width: 42,
                           height: 42,
                           child: _buildTransportOriginMarker(),
@@ -1222,30 +1264,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     markers: [
                       Marker(
                         point: _currentUserLocation!,
-                        width: 44,
-                        height: 44,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color:
-                                const Color(0xFF2563EB).withValues(alpha: 0.18),
-                            shape: BoxShape.circle,
-                          ),
-                          alignment: Alignment.center,
-                          child: Container(
-                            width: 18,
-                            height: 18,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF2563EB),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 3),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Colors.black26,
-                                  blurRadius: 5,
-                                ),
-                              ],
-                            ),
-                          ),
+                        width: 112,
+                        height: 112,
+                        child: ValueListenableBuilder<double?>(
+                          valueListenable: _deviceHeading,
+                          builder: (context, heading, _) =>
+                              LocationPuck(heading: heading),
                         ),
                       ),
                     ],
@@ -1317,6 +1341,20 @@ class _MapViewScreenState extends State<MapViewScreen> {
                       ),
                   ],
                 ),
+              ),
+            ),
+
+          // Update notice for a downloaded map. Never starts a download.
+          if (hasOfflineUpdate() &&
+              !_offlineUpdateDismissed &&
+              _navigationState == NavigationUiState.idle)
+            Positioned(
+              key: const ValueKey('offline-update-banner'),
+              left: 16,
+              right: 16,
+              bottom: 24,
+              child: OfflineUpdateBanner(
+                onDismiss: () => setState(() => _offlineUpdateDismissed = true),
               ),
             ),
 
