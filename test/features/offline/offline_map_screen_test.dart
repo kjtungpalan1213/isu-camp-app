@@ -1,14 +1,13 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:isu_camp_app/features/offline/screens/offline_map_screen.dart';
 import 'package:isu_camp_app/features/offline/models/offline_pack.dart';
 import 'package:isu_camp_app/features/offline/services/offline_file_store.dart';
 import 'package:isu_camp_app/features/offline/services/offline_pack_service.dart';
+import 'offline_test_backend.dart';
 
 /// What the screen shows for each pack state, and that opening it never
 /// downloads anything. The download, update, and delete mechanics themselves
@@ -41,6 +40,7 @@ class _ProgressPack extends OfflinePackService {
   OfflinePackStatus snapshot = const OfflinePackStatus(
     state: OfflinePackState.downloading,
     bytesOnDisk: 13 * 1024 * 1024,
+    totalBytes: 32 * 1024 * 1024,
     bytesInFlight: 512 * 1024,
     completedFiles: 123,
     totalFiles: 456,
@@ -55,6 +55,24 @@ class _ProgressPack extends OfflinePackService {
   void show(OfflinePackStatus status) {
     snapshot = status;
     notifyListeners();
+  }
+}
+
+class _UnavailableUpdatePack extends _ProgressPack {
+  _UnavailableUpdatePack() {
+    snapshot = const OfflinePackStatus(
+        state: OfflinePackState.ready,
+        installedVersion: 'v1',
+        updateVersion: 'v2');
+  }
+
+  @override
+  Future<bool> checkForUpdate() async => true;
+
+  @override
+  Future<void> download({bool update = false}) async {
+    show(status.copyWith(
+        message: 'The offline map pack is being prepared. Try again later.'));
   }
 }
 
@@ -77,25 +95,20 @@ void main() {
     }
   });
 
-  MockClient backend(String version) => MockClient((request) async {
-        final url = request.url.toString();
-        requests.add(url);
-        if (url.endsWith('/campus/offline/bundle')) {
-          return http.Response(jsonEncode(_bundle(version)), 200);
-        }
-        if (url.endsWith('/campus/offline/manifest')) {
-          return http.Response(jsonEncode({'version': version}), 200);
-        }
-        return http.Response.bytes([0x89, 0x50, 0x4E, 0x47], 200);
-      });
+  http.Client backend(String version) {
+    final backend =
+        PackBackend(PublishedPackFixture(version, bundle: _bundle(version)));
+    backend.intercept = (request) async {
+      requests.add(request.url.toString());
+      return null;
+    };
+    return backend.client;
+  }
 
-  // Only the coarsest zoom, so these UI tests download nine tiles, not 1126.
   OfflinePackService serviceFor(String version) => OfflinePackService(
-        store: OfflineFileStore(rootPath: root.path),
-        client: backend(version),
-        baseUrl: () => _baseUrl,
-        maxTileZoom: 15,
-      );
+      store: OfflineFileStore(rootPath: root.path),
+      client: backend(version),
+      baseUrl: () => _baseUrl);
 
   /// The pack reads and writes real files, which only progress outside the
   /// widget tester's fake clock.
@@ -123,17 +136,28 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: OfflineMapScreen(pack: pack)));
     await tester.pump();
 
-    expect(subtitle(tester), '13.5 MB downloaded');
+    expect(subtitle(tester), '13.5 MB / 32.0 MB');
+    expect(
+        tester
+            .widget<LinearProgressIndicator>(
+                find.byType(LinearProgressIndicator))
+            .value,
+        13.5 / 32);
+
+    pack.show(pack.status.copyWith(clearTotalBytes: true));
+    await tester.pump();
+    expect(subtitle(tester), 'Loading download details…');
     expect(
         tester
             .widget<LinearProgressIndicator>(
                 find.byType(LinearProgressIndicator))
             .value,
         isNull);
+    pack.show(pack.status.copyWith(totalBytes: 32 * 1024 * 1024));
 
     pack.show(pack.status.copyWith(bytesInFlight: 1024 * 1024));
     await tester.pump();
-    expect(subtitle(tester), '14.0 MB downloaded');
+    expect(subtitle(tester), '14.0 MB / 32.0 MB');
 
     pack.show(pack.status.copyWith(
       state: OfflinePackState.incomplete,
@@ -141,13 +165,13 @@ void main() {
       bytesInFlight: 0,
     ));
     await tester.pump();
-    expect(subtitle(tester), '14.0 MB downloaded • Paused');
+    expect(subtitle(tester), '14.0 MB / 32.0 MB • Paused');
     expect(
         tester
             .widget<LinearProgressIndicator>(
                 find.byType(LinearProgressIndicator))
             .value,
-        0);
+        14 / 32);
     expect(find.byKey(const ValueKey('offline-resume-button')), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     pack.dispose();
@@ -214,18 +238,13 @@ void main() {
     late OfflinePackService pack;
     pack = OfflinePackService(
       store: OfflineFileStore(rootPath: root.path),
-      client: MockClient((request) async {
-        final url = request.url.toString();
-        if (url.endsWith('/campus/offline/bundle')) {
-          return http.Response(jsonEncode(_bundle('v1')), 200);
-        }
-        if (url.contains('tile.openstreetmap.org')) {
-          pack.pause();
-        }
-        return http.Response.bytes([0x89, 0x50, 0x4E, 0x47], 200);
-      }),
+      client: (PackBackend(PublishedPackFixture('v1', bundle: _bundle('v1')))
+            ..intercept = (request) async {
+              if (request.url.path.contains('/tiles/')) pack.pause();
+              return null;
+            })
+          .client,
       baseUrl: () => _baseUrl,
-      maxTileZoom: 15,
     );
     await tester.runAsync(() => pack.download());
     await openScreen(tester, pack);
@@ -253,5 +272,19 @@ void main() {
     expect(pack.status.isReady, isTrue);
     expect(pack.status.installedVersion, 'v1');
     expect(find.byKey(const ValueKey('offline-delete-button')), findsOneWidget);
+  });
+  testWidgets('an unavailable published update is not reported as successful',
+      (tester) async {
+    final pack = _UnavailableUpdatePack();
+    await tester.pumpWidget(MaterialApp(home: OfflineMapScreen(pack: pack)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download update'));
+    await tester.pumpAndSettle();
+    expect(pack.status.isReady, isTrue, reason: 'the old pack is still usable');
+    expect(
+        find.text(
+            'Campus map updated. Offline navigation is using the new data.'),
+        findsNothing);
+    expect(find.textContaining('being prepared'), findsWidgets);
   });
 }

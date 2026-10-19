@@ -60,20 +60,20 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     }
   }
 
-  Future<void> _download() async {
+  Future<void> _download({bool update = false}) async {
     final wasInstalled = _pack.status.installedVersion != null;
-    await _pack.download();
+    await _pack.download(update: update);
     if (!mounted) return;
     final status = _pack.status;
-    if (status.isReady) {
+    if (status.message != null) {
+      _notify(status.message!, Colors.red.shade700);
+    } else if (status.isReady) {
       _notify(
         wasInstalled
             ? 'Campus map updated. Offline navigation is using the new data.'
             : 'Campus map downloaded. Offline navigation is now active.',
         const Color(0xFF0F751B),
       );
-    } else if (status.message != null) {
-      _notify(status.message!, Colors.red.shade700);
     }
   }
 
@@ -248,7 +248,8 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _pack.status.isBusy ? null : _download,
+              onPressed:
+                  _pack.status.isBusy ? null : () => _download(update: true),
               icon: const Icon(Icons.download, size: 17, color: Colors.black87),
               label: Text(
                 'Download update',
@@ -321,8 +322,11 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(6),
               child: LinearProgressIndicator(
-                // A file-count ratio is not a byte total. Keep paused bars still.
-                value: status.isBusy ? null : 0,
+                value: status.totalBytes != null
+                    ? status.progress
+                    : status.isBusy
+                        ? null
+                        : 0,
                 minHeight: 6,
                 backgroundColor: Colors.white24,
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -353,9 +357,11 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
       case OfflinePackState.absent:
         return 'Map, campus data, and photos';
       case OfflinePackState.downloading:
-        return '${status.downloadSizeLabel} downloaded';
+        return status.totalBytes == null
+            ? 'Loading download details…'
+            : status.downloadProgressLabel;
       case OfflinePackState.incomplete:
-        return '${status.sizeLabel} downloaded • Paused';
+        return '${status.downloadProgressLabel} • Paused';
       case OfflinePackState.ready:
         return '${status.sizeLabel} • Offline Ready';
     }

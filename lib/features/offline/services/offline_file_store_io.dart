@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -34,8 +35,8 @@ class OfflineFileStore {
         ..addAll(await root
             .list(recursive: true, followLinks: false)
             .where((entity) => entity is File)
-            .map((entity) => p.url.joinAll(
-                p.split(p.relative(entity.path, from: _rootPath!))))
+            .map((entity) => p.url
+                .joinAll(p.split(p.relative(entity.path, from: _rootPath!))))
             .toSet());
       _isOpen = true;
       return true;
@@ -65,6 +66,26 @@ class OfflineFileStore {
     await write(path, Uint8List.fromList(utf8.encode(contents)));
   }
 
+  Future<Uint8List?> readBytes(String path) async {
+    try {
+      return await File(_absolute(path)).readAsBytes();
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  Future<bool> matches(String path, int sizeBytes, String checksum) async {
+    if (!contains(path)) return false;
+    try {
+      final file = File(_absolute(path));
+      return await file.length() == sizeBytes &&
+          (await crypto.sha256.bind(file.openRead()).first).toString() ==
+              checksum;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
   Future<String?> readText(String path) async {
     try {
       return await File(_absolute(path)).readAsString();
@@ -80,9 +101,10 @@ class OfflineFileStore {
     if (!_isOpen) return 0;
     var total = 0;
     try {
-      await for (final entity
-          in Directory(_rootPath!).list(recursive: true, followLinks: false)) {
-        if (entity is File) total += await entity.length();
+      // Resume metadata and interrupted staging files are not pack payload.
+      for (final path in _storedPaths.toList()) {
+        if (path == 'meta.json' || path.endsWith('.part')) continue;
+        total += await File(_absolute(path)).length();
       }
     } catch (_) {
       return total;
@@ -93,7 +115,8 @@ class OfflineFileStore {
   /// Removes every cached file whose key starts with [prefix].
   Future<void> deletePrefix(String prefix) async {
     if (!_isOpen) return;
-    for (final path in _storedPaths.where((p) => p.startsWith(prefix)).toList()) {
+    for (final path
+        in _storedPaths.where((p) => p.startsWith(prefix)).toList()) {
       try {
         await File(_absolute(path)).delete();
       } catch (_) {
@@ -111,5 +134,6 @@ class OfflineFileStore {
     await root.create(recursive: true);
   }
 
-  String _absolute(String path) => p.joinAll([_rootPath!, ...p.url.split(path)]);
+  String _absolute(String path) =>
+      p.joinAll([_rootPath!, ...p.url.split(path)]);
 }

@@ -1,15 +1,18 @@
 import logging
 import hashlib
+import os
+from pathlib import Path as FilePath
 
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Path, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from app.database.supabase import supabase
 from app.utils.campus_data import (building_for_map, bundle_version, cover_photos_for_map,
-                                   offline_manifest, photo_content)
+                                   photo_content)
 from app.utils.routing import campus_routes, RoutingError
+from app.services.offline_pack import OfflinePackStore
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -226,21 +229,51 @@ def offline_bundle_payload(request):
     return bundle
 
 
+def offline_pack_store():
+    root = os.getenv("OFFLINE_PACK_ROOT", str(FilePath(__file__).resolve().parents[2] / "var/offline-packs"))
+    return OfflinePackStore(root)
+
+
 @router.get("/offline/manifest")
 def get_offline_manifest(request: Request):
-    """Cheap update check. The app compares versions and asks the user first."""
+    """Read a previously published total; never generate a pack on request."""
     try:
-        return offline_manifest(offline_bundle_payload(request))
-    except Exception:
-        logger.exception("Could not build the offline campus manifest")
-        raise HTTPException(
-            status_code=503,
-            detail="Offline map updates are temporarily unavailable.",
-        ) from None
+        manifest = offline_pack_store().manifest()
+        return JSONResponse(manifest, headers={"ETag": '"' + manifest["version"] + '"',
+                                              "Cache-Control": "no-cache"})
+    except (OSError, ValueError, KeyError):
+        raise HTTPException(503, "The offline map pack is being prepared. Try again later.") from None
+
+
+@router.get("/offline/packs/{version}/{asset_path:path}")
+def get_offline_pack_asset(version: str, asset_path: str):
+    try:
+        file, entry = offline_pack_store().asset(version, asset_path)
+    except (OSError, ValueError, KeyError):
+        raise HTTPException(404, "Offline pack file not found.") from None
+    return FileResponse(file, media_type="application/json" if asset_path == "bundle.json" else "application/octet-stream",
+                        headers={"ETag": '"' + entry["sha256"] + '"',
+                                 "Cache-Control": "public, max-age=31536000, immutable, no-transform",
+                                 "Content-Encoding": "identity",
+                                 "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/offline/bundle")
 def get_offline_bundle(request: Request):
+    # Older installed clients receive the same published dataset/version.
+    try:
+        manifest = offline_pack_store().manifest()
+        etag = '"' + manifest["version"] + '"'
+        validators = [tag.strip().removeprefix("W/") for tag in
+                      request.headers.get("if-none-match", "").split(",")]
+        if etag in validators or "*" in validators:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+        response = get_offline_pack_asset(manifest["version"], "bundle.json")
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["ETag"] = etag
+        return response
+    except (OSError, ValueError, KeyError):
+        pass
     try:
         bundle = offline_bundle_payload(request)
     except Exception:

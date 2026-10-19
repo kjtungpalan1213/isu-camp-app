@@ -37,11 +37,9 @@ class OfflinePackService extends ChangeNotifier {
     OfflineFileStore? store,
     http.Client? client,
     String Function()? baseUrl,
-    int maxTileZoom = offlineTileMaxZoom,
   })  : _store = store ?? OfflineFileStore(),
         _client = client,
-        _baseUrl = baseUrl ?? (() => AuthService.baseUrl),
-        _maxTileZoom = maxTileZoom;
+        _baseUrl = baseUrl ?? (() => AuthService.baseUrl);
 
   static OfflinePackService _instance = OfflinePackService();
 
@@ -66,14 +64,12 @@ class OfflinePackService extends ChangeNotifier {
   final http.Client? _client;
   final String Function() _baseUrl;
 
-  /// Deepest zoom to cache. Lowered in tests to keep them quick.
-  final int _maxTileZoom;
-
   OfflinePackStatus _status = const OfflinePackStatus();
   Map<String, dynamic>? _bundle;
   List<CampusBuilding>? _buildings;
   bool _pauseRequested = false;
   final Map<String, int> _receivedBytes = {};
+  OfflinePackManifest? _manifest;
   final Stopwatch _progressClock = Stopwatch()..start();
   int _lastProgressAt = -100;
   Timer? _progressTimer;
@@ -100,20 +96,46 @@ class OfflinePackService extends ChangeNotifier {
       return;
     }
     final meta = await _readJson(_metaPath);
-    final bundle = await _readJson(_bundlePath);
-    if (meta == null || bundle == null) {
+    OfflinePackManifest? manifest;
+    try {
+      if (meta?['manifest'] is Map) {
+        manifest = OfflinePackManifest.fromJson(
+            Map<String, dynamic>.from(meta!['manifest'] as Map));
+      }
+    } on FormatException {
       _update(const OfflinePackStatus());
       return;
     }
+    final bundlePath = manifest == null
+        ? _bundlePath
+        : 'packs/${manifest.version}/$_bundlePath';
+    final bundle = await _readJson(bundlePath);
+    if (meta == null ||
+        bundle == null ||
+        (manifest != null && bundle['version'] != manifest.version)) {
+      _update(const OfflinePackStatus());
+      return;
+    }
+    _manifest = manifest;
     _adoptBundle(bundle);
-    final complete = meta['complete'] == true;
+    final present = manifest?.files
+        .where((file) => _store.contains(manifest!.cachePath(file)))
+        .toList();
+    final complete = meta['complete'] == true &&
+        (manifest == null || present!.length == manifest.files.length);
+    final storedBytes = manifest == null
+        ? await _store.bytesOnDisk()
+        : present!.fold<int>(0, (sum, file) => sum + file.sizeBytes);
     _update(OfflinePackStatus(
       state: complete ? OfflinePackState.ready : OfflinePackState.incomplete,
       installedVersion: meta['version'] as String?,
       updateVersion: meta['updateVersion'] as String?,
-      completedFiles: (meta['completedFiles'] as num?)?.toInt() ?? 0,
-      totalFiles: (meta['totalFiles'] as num?)?.toInt() ?? 0,
-      bytesOnDisk: await _store.bytesOnDisk(),
+      completedFiles:
+          present?.length ?? (meta['completedFiles'] as num?)?.toInt() ?? 0,
+      totalFiles:
+          manifest?.files.length ?? (meta['totalFiles'] as num?)?.toInt() ?? 0,
+      bytesOnDisk: storedBytes,
+      totalBytes: manifest?.totalBytes ?? (complete ? storedBytes : null),
       installedAt: DateTime.tryParse(meta['installedAt'] as String? ?? ''),
       lastCheckedAt: DateTime.tryParse(meta['lastCheckedAt'] as String? ?? ''),
       message: complete
@@ -129,17 +151,14 @@ class OfflinePackService extends ChangeNotifier {
     final installed = _status.installedVersion;
     if (installed == null || _status.isBusy) return false;
     try {
-      final response = await _http
-          .get(Uri.parse('${_baseUrl()}/campus/offline/manifest'))
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode != 200) return false;
-      final manifest = jsonDecode(response.body) as Map<String, dynamic>;
-      final available = manifest['version'] as String?;
+      final manifest = await _publishedManifest();
+      if (_status.isBusy) return false;
+      final available = manifest.version;
       final checkedAt = DateTime.now();
       _update(_status.copyWith(
         updateVersion: available,
         lastCheckedAt: checkedAt,
-        clearUpdateVersion: available == null || available == installed,
+        clearUpdateVersion: available == installed,
       ));
       await _writeMeta(complete: _status.isReady);
       return _status.hasUpdate;
@@ -151,15 +170,17 @@ class OfflinePackService extends ChangeNotifier {
   }
 
   /// Downloads, resumes, or updates the pack. Started only by the user.
-  Future<void> download() {
-    return _activeDownload ??= _runDownload().whenComplete(() {
+  Future<void> download({bool update = false}) {
+    return _activeDownload ??= _runDownload(update: update).whenComplete(() {
       _activeDownload = null;
     });
   }
 
   /// Asks the running download to stop. Finished files stay on disk.
   void pause() {
-    if (_status.isBusy) _pauseRequested = true;
+    if (_status.isBusy) {
+      _pauseRequested = true;
+    }
   }
 
   /// Removes every downloaded file and returns the app to online-only.
@@ -179,150 +200,196 @@ class OfflinePackService extends ChangeNotifier {
     await _store.deleteAll();
     _bundle = null;
     _buildings = null;
+    _manifest = null;
     _update(const OfflinePackStatus());
   }
 
-  Future<void> _runDownload() async {
+  Future<OfflinePackManifest> _publishedManifest() async {
+    final response = await _http
+        .get(Uri.parse('${_baseUrl()}/campus/offline/manifest'))
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw const _DownloadFailure(
+          'The offline map pack is being prepared. Try again later.');
+    }
+    return OfflinePackManifest.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> _runDownload({required bool update}) async {
     if (!_store.isSupported || !await _store.open()) {
       _update(_status.copyWith(state: OfflinePackState.unsupported));
       return;
     }
     _pauseRequested = false;
-    final resumeState = _status.state;
+    final previousStatus = _status;
+    final previousManifest = _manifest;
     _update(_status.copyWith(
-        state: OfflinePackState.downloading, clearMessage: true));
-
-    final Map<String, dynamic> bundle;
+        state: OfflinePackState.downloading,
+        clearTotalBytes: true,
+        clearMessage: true));
+    final OfflinePackManifest manifest;
     try {
-      final bytes = await _receive(
-        _bundlePath,
-        Uri.parse('${_baseUrl()}/campus/offline/bundle'),
-        const Duration(seconds: 60),
-      );
-      bundle = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      // A paused pack stays pinned even if another version was published.
+      manifest = !update &&
+              previousStatus.state == OfflinePackState.incomplete &&
+              _manifest != null
+          ? _manifest!
+          : await _publishedManifest();
     } catch (error) {
-      _receivedBytes.remove(_bundlePath);
-      _progressTimer?.cancel();
-      _progressTimer = null;
-      _update(_status.copyWith(
-        bytesInFlight: 0,
-        // Keep whatever was stored: a half-finished pack must not be
-        // reported as ready just because the update attempt failed.
-        state: resumeState,
-        message: error is _DownloadFailure
-            ? error.message
-            : 'Could not reach the campus server. Check your connection and try again.',
-      ));
+      _update(previousStatus.copyWith(
+          message: error is _DownloadFailure
+              ? error.message
+              : error is FormatException
+                  ? 'The server has not published a valid precomputed offline pack yet. Try again later.'
+                  : 'Could not load the published offline map. Check your connection and try again.'));
       return;
     }
-
-    final version = bundle['version'] as String?;
-    // A new dataset can reuse photo ids for different images, so the stored
-    // photos go with the dataset they came from. Map tiles do not.
-    if (version != null && version != _status.installedVersion) {
-      await _store.deletePrefix('photos/');
+    // The denominator is available before any file request or disk validation.
+    _update(_status.copyWith(
+        totalBytes: manifest.totalBytes,
+        totalFiles: manifest.files.length,
+        completedFiles: 0,
+        bytesOnDisk: 0,
+        bytesInFlight: 0));
+    final verified = <String>{};
+    var savedBytes = 0;
+    try {
+      for (final file in manifest.files) {
+        var matches = await _store.matches(
+            manifest.cachePath(file), file.sizeBytes, file.checksum);
+        final previousPath = previousManifest == null
+            ? file.path
+            : 'packs/${previousManifest.version}/${file.path}';
+        if (!matches &&
+            previousPath != manifest.cachePath(file) &&
+            _store.contains(previousPath)) {
+          final bytes = await _store.readBytes(previousPath);
+          if (bytes != null &&
+              bytes.length == file.sizeBytes &&
+              sha256.convert(bytes).toString() == file.checksum) {
+            await _store.write(manifest.cachePath(file), bytes);
+            matches = true;
+          }
+        }
+        if (!matches && _store.contains(manifest.cachePath(file))) {
+          await _store.deletePrefix(manifest.cachePath(file));
+        }
+        if (matches) {
+          verified.add(file.path);
+          savedBytes += file.sizeBytes;
+        }
+      }
+    } catch (_) {
+      _update(previousStatus.copyWith(
+          message:
+              'Could not prepare offline storage. Check your free space and try again.'));
+      return;
     }
-    await _store.writeText(_bundlePath, jsonEncode(bundle));
-    _adoptBundle(bundle);
-    _receivedBytes.remove(_bundlePath);
     _update(_status.copyWith(
-      bytesOnDisk: await _store.bytesOnDisk(),
-      bytesInFlight: 0,
-    ));
-
-    final photoPaths = <String, String>{
-      for (final url in _photoUrls(bundle)) offlinePhotoPath(url): url,
-    };
-    final tiles = tilesForBounds(
-      south: isuCampusSouth,
-      west: isuCampusWest,
-      north: isuCampusNorth,
-      east: isuCampusEast,
-      minZoom: offlineTileMinZoom,
-      maxZoom: _maxTileZoom,
-    );
-
-    final work = <String, Uri>{
-      for (final entry in photoPaths.entries)
-        if (!_store.contains(entry.key)) entry.key: Uri.parse(entry.value),
-      for (final tile in tiles)
-        if (!_store.contains(tile.path)) tile.path: Uri.parse(_tileUrl(tile)),
-    };
-    final total = 1 + photoPaths.length + tiles.length;
-    var completed = total - work.length;
-
+        bytesOnDisk: savedBytes, completedFiles: verified.length));
+    final bundleFile =
+        manifest.files.firstWhere((file) => file.path == _bundlePath);
+    if (_pauseRequested && !verified.contains(_bundlePath)) {
+      _update(previousStatus.copyWith(message: 'Paused before downloading.'));
+      return;
+    }
+    try {
+      if (!verified.contains(_bundlePath)) {
+        if (!await _fetchInto(manifest, bundleFile)) {
+          throw const _DownloadFailure(
+              'Could not download the campus data. Check your connection and try again.');
+        }
+        verified.add(_bundlePath);
+      }
+      final bundle = await _readJson(manifest.cachePath(bundleFile));
+      if (bundle == null || bundle['version'] != manifest.version) {
+        throw const _DownloadFailure(
+            'The published campus data is invalid. Try again later.');
+      }
+      _manifest = manifest;
+      _adoptBundle(bundle);
+    } catch (error) {
+      _manifest = previousManifest;
+      _update(previousStatus.copyWith(
+          message: error is _DownloadFailure
+              ? error.message
+              : 'Could not read the offline map. Try again later.'));
+      return;
+    }
     _update(_status.copyWith(
-      installedVersion: version,
-      completedFiles: completed,
-      totalFiles: total,
-      clearUpdateVersion: true,
-    ));
-    await _writeMeta(
-        complete: work.isEmpty, generatedAt: bundle['generatedAt']);
-
+        installedVersion: manifest.version,
+        completedFiles: verified.length,
+        clearUpdateVersion: true));
+    await _writeMeta(complete: verified.length == manifest.files.length);
     var failures = 0;
-    var checkpoint = completed;
-    final pending = work.entries.toList();
+    var checkpoint = verified.length;
+    final pending =
+        manifest.files.where((file) => !verified.contains(file.path)).toList();
     for (var start = 0;
         start < pending.length && !_pauseRequested && failures < _failureBudget;
         start += _parallelDownloads) {
-      final batch = pending.skip(start).take(_parallelDownloads);
-      final results = await Future.wait(
-          batch.map((entry) => _fetchInto(entry.key, entry.value)));
-      for (final saved in results) {
-        if (saved) {
-          completed++;
+      final batch = pending.skip(start).take(_parallelDownloads).toList();
+      final results =
+          await Future.wait(batch.map((file) => _fetchInto(manifest, file)));
+      for (var i = 0; i < results.length; i++) {
+        if (results[i]) {
+          verified.add(batch[i].path);
           failures = 0;
         } else {
           failures++;
         }
       }
-      _update(_status.copyWith(completedFiles: completed));
-      // Survive being killed mid-download: resuming skips what is on disk.
-      // Checkpointing in groups keeps the write cost off the per-tile path.
-      if (completed - checkpoint >= _checkpointEvery) {
-        checkpoint = completed;
-        await _writeMeta(complete: false, generatedAt: bundle['generatedAt']);
+      _update(_status.copyWith(completedFiles: verified.length));
+      if (verified.length - checkpoint >= _checkpointEvery) {
+        checkpoint = verified.length;
+        await _writeMeta(complete: false);
       }
     }
-
-    final missing = work.keys.where((path) => !_store.contains(path)).length;
-    final complete = missing == 0;
+    final complete = verified.length == manifest.files.length;
     _update(_status.copyWith(
       state: complete ? OfflinePackState.ready : OfflinePackState.incomplete,
-      completedFiles: total - missing,
-      totalFiles: total,
-      bytesOnDisk: await _store.bytesOnDisk(),
+      bytesOnDisk: manifest.files
+          .where((file) => verified.contains(file.path))
+          .fold<int>(0, (sum, file) => sum + file.sizeBytes),
+      bytesInFlight: 0,
+      totalBytes: manifest.totalBytes,
+      completedFiles: verified.length,
       installedAt: complete ? DateTime.now() : _status.installedAt,
       message: complete
           ? null
           : _pauseRequested
               ? 'Paused. Resume to finish downloading the offline map.'
-              : 'Stopped after a connection problem. Resume to finish downloading the offline map.',
+              : 'Stopped after a connection or file verification problem. Resume to try again.',
       clearMessage: complete,
     ));
     _pauseRequested = false;
-    await _writeMeta(complete: complete, generatedAt: bundle['generatedAt']);
+    await _writeMeta(complete: complete);
   }
 
-  /// Keeps concurrent transfers separate so chunks are counted exactly once.
-  Future<Uint8List> _receive(String path, Uri url, Duration timeout) async {
+  Future<Uint8List> _receive(String path, Uri url, int expectedBytes) async {
     final response = await _http
         .send(http.Request('GET', url)
-          ..headers['User-Agent'] = campusDownloadUserAgent)
-        .timeout(timeout);
+          ..headers.addAll({
+            'User-Agent': campusDownloadUserAgent,
+            'Accept-Encoding': 'identity'
+          }))
+        .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
-      await response.stream.drain<void>().timeout(timeout);
-      throw const _DownloadFailure(
-          'The offline map is not available right now. Try again later.');
+      await response.stream.timeout(const Duration(seconds: 30)).drain<void>();
+      throw const _DownloadFailure('Offline pack file is unavailable.');
     }
     final bytes = BytesBuilder(copy: false);
-    await for (final chunk in response.stream.timeout(timeout)) {
+    await for (final chunk
+        in response.stream.timeout(const Duration(seconds: 30))) {
+      if (bytes.length + chunk.length > expectedBytes) {
+        throw const _DownloadFailure(
+            'Offline pack file exceeds its published size.');
+      }
       bytes.add(chunk);
       _receivedBytes[path] = bytes.length;
       _publishTransferProgress();
     }
-    if (bytes.isEmpty) throw const _DownloadFailure('Empty download.');
     return bytes.takeBytes();
   }
 
@@ -345,41 +412,28 @@ class OfflinePackService extends ChangeNotifier {
     ));
   }
 
-  Future<bool> _fetchInto(String path, Uri url) async {
+  Future<bool> _fetchInto(
+      OfflinePackManifest manifest, OfflinePackFile file) async {
     var savedBytes = 0;
     try {
-      final bytes = await _receive(path, url, const Duration(seconds: 30));
-      await _store.write(path, bytes);
+      final uri = Uri.parse(
+          '${_baseUrl()}/campus/offline/packs/${manifest.version}/${file.path}');
+      final bytes = await _receive(file.path, uri, file.sizeBytes);
+      if (bytes.length != file.sizeBytes ||
+          sha256.convert(bytes).toString() != file.checksum) {
+        throw const _DownloadFailure('Offline pack checksum did not match.');
+      }
+      // Verify first, then atomically commit the original bytes. In particular,
+      // re-encoding bundle JSON would invalidate its published size/checksum.
+      await _store.write(manifest.cachePath(file), bytes);
       savedBytes = bytes.length;
       return true;
     } catch (_) {
       return false;
     } finally {
-      // Failed partial responses are discarded; only committed files survive
-      // pause/restart. Moving bytes to disk must not double-count them.
-      _receivedBytes.remove(path);
+      _receivedBytes.remove(file.path);
       _publishTransferProgress(force: true, savedBytes: savedBytes);
     }
-  }
-
-  String _tileUrl(OfflineTile tile) => campusTileUrlTemplate
-      .replaceAll('{z}', '${tile.z}')
-      .replaceAll('{x}', '${tile.x}')
-      .replaceAll('{y}', '${tile.y}');
-
-  static List<String> _photoUrls(Map<String, dynamic> bundle) {
-    final urls = <String>{};
-    for (final building in (bundle['buildings'] as List<dynamic>? ?? [])) {
-      final row = building as Map<String, dynamic>;
-      for (final url in [
-        row['imageUrl'],
-        ...((row['rooms'] as List<dynamic>? ?? [])
-            .map((room) => (room as Map<String, dynamic>)['imageUrl']))
-      ]) {
-        if (url is String && url.startsWith('http')) urls.add(url);
-      }
-    }
-    return urls.toList(growable: false);
   }
 
   void _adoptBundle(Map<String, dynamic> bundle) {
@@ -404,10 +458,12 @@ class OfflinePackService extends ChangeNotifier {
         _metaPath,
         jsonEncode({
           'version': _status.installedVersion,
-          'generatedAt': generatedAt,
+          'generatedAt': _manifest?.generatedAt ?? generatedAt,
           'complete': complete,
           'completedFiles': _status.completedFiles,
           'totalFiles': _status.totalFiles,
+          'totalBytes': _status.totalBytes,
+          'manifest': _manifest?.toJson(),
           'installedAt': _status.installedAt?.toIso8601String(),
           'updateVersion': _status.updateVersion,
           'lastCheckedAt': _status.lastCheckedAt?.toIso8601String(),
@@ -458,12 +514,16 @@ class OfflinePackService extends ChangeNotifier {
   }
 
   /// A downloaded campus photo, or null when it is not cached.
-  ImageProvider? photoImage(String url) =>
-      _bundle == null ? null : _store.imageFor(offlinePhotoPath(url));
+  ImageProvider? photoImage(String url) => _bundle == null
+      ? null
+      : _store.imageFor(_cacheKey(offlinePhotoPath(url)));
 
   /// A downloaded map tile, or null when it is not cached.
   ImageProvider? tileImage(int z, int x, int y) =>
-      _store.imageFor(OfflineTile(z, x, y).path);
+      _store.imageFor(_cacheKey(OfflineTile(z, x, y).path));
+
+  String _cacheKey(String path) =>
+      _manifest == null ? path : 'packs/${_manifest!.version}/$path';
 }
 
 class _DownloadFailure implements Exception {
