@@ -19,6 +19,11 @@ class OfflineFileStore {
 
   Future<void> writeText(String path, String contents) async {}
 
+  Future<Uint8List?> readBytes(String path) async => null;
+
+  Future<bool> matches(String path, int sizeBytes, String checksum) async =>
+      false;
+
   Future<String?> readText(String path) async => null;
 
   ImageProvider? imageFor(String path) => null;

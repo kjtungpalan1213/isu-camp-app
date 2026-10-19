@@ -31,8 +31,8 @@ class OfflinePackStatus {
   final int totalFiles;
   final int bytesOnDisk;
 
-  /// Size of the complete pack, including files already saved. Null while
-  /// checking resource sizes or when opening an older unfinished download.
+  /// Precomputed size of the published pack, including already saved files.
+  /// Null only before its manifest loads or for a legacy local pack.
   final int? totalBytes;
 
   /// Received bytes in files that have not yet been committed to disk.
@@ -115,4 +115,85 @@ class OfflinePackStatus {
         lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,
         message: clearMessage ? null : message ?? this.message,
       );
+}
+
+/// One immutable payload in a published pack. Paths are cache keys, never
+/// arbitrary URLs: downloads are pinned to the configured backend and version.
+class OfflinePackFile {
+  final String path;
+  final int sizeBytes;
+  final String checksum;
+
+  const OfflinePackFile(this.path, this.sizeBytes, this.checksum);
+
+  factory OfflinePackFile.fromJson(Map<String, dynamic> json) {
+    final path = json['path'];
+    final size = json['bytes'];
+    final checksum = json['sha256'];
+    if (path is! String ||
+        !RegExp(r'^(bundle\.json|photos/[0-9a-f]{40}\.img|tiles/\d+/\d+/\d+\.png)$')
+            .hasMatch(path) ||
+        size is! int ||
+        size <= 0 ||
+        checksum is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(checksum)) {
+      throw const FormatException('Invalid offline pack file');
+    }
+    return OfflinePackFile(path, size, checksum);
+  }
+
+  Map<String, dynamic> toJson() =>
+      {'path': path, 'bytes': sizeBytes, 'sha256': checksum};
+}
+
+class OfflinePackManifest {
+  final String version;
+  final String? generatedAt;
+  final List<OfflinePackFile> files;
+  final int totalBytes;
+
+  const OfflinePackManifest._(
+      this.version, this.generatedAt, this.files, this.totalBytes);
+
+  factory OfflinePackManifest.fromJson(Map<String, dynamic> json) {
+    final version = json['version'];
+    final rawFiles = json['files'];
+    if (json['schemaVersion'] != 1 ||
+        version is! String ||
+        !RegExp(r'^[a-zA-Z0-9_-]{1,128}$').hasMatch(version) ||
+        rawFiles is! List ||
+        rawFiles.isEmpty) {
+      throw const FormatException(
+          'The server has not published a precomputed offline pack');
+    }
+    if (rawFiles.any((row) => row is! Map) ||
+        (json['generatedAt'] != null && json['generatedAt'] is! String)) {
+      throw const FormatException('Invalid offline pack metadata');
+    }
+    final files = rawFiles
+        .map((row) =>
+            OfflinePackFile.fromJson(Map<String, dynamic>.from(row as Map)))
+        .toList(growable: false);
+    final paths = files.map((file) => file.path).toSet();
+    final total = files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
+    if (paths.length != files.length ||
+        !paths.contains('bundle.json') ||
+        json['totalBytes'] is! int ||
+        json['totalBytes'] != total) {
+      throw const FormatException(
+          'Offline pack total does not match its files');
+    }
+    return OfflinePackManifest._(version, json['generatedAt'] as String?,
+        List.unmodifiable(files), total);
+  }
+
+  Map<String, dynamic> toJson() => {
+        'schemaVersion': 1,
+        'version': version,
+        'generatedAt': generatedAt,
+        'totalBytes': totalBytes,
+        'files': files.map((file) => file.toJson()).toList(),
+      };
+
+  String cachePath(OfflinePackFile file) => 'packs/$version/${file.path}';
 }

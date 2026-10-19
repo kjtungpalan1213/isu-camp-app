@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -63,6 +64,26 @@ class OfflineFileStore {
 
   Future<void> writeText(String path, String contents) async {
     await write(path, Uint8List.fromList(utf8.encode(contents)));
+  }
+
+  Future<Uint8List?> readBytes(String path) async {
+    try {
+      return await File(_absolute(path)).readAsBytes();
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  Future<bool> matches(String path, int sizeBytes, String checksum) async {
+    if (!contains(path)) return false;
+    try {
+      final file = File(_absolute(path));
+      return await file.length() == sizeBytes &&
+          (await crypto.sha256.bind(file.openRead()).first).toString() ==
+              checksum;
+    } on FileSystemException {
+      return false;
+    }
   }
 
   Future<String?> readText(String path) async {

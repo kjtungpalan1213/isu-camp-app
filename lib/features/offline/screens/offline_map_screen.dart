@@ -60,9 +60,9 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     }
   }
 
-  Future<void> _download() async {
+  Future<void> _download({bool update = false}) async {
     final wasInstalled = _pack.status.installedVersion != null;
-    await _pack.download();
+    await _pack.download(update: update);
     if (!mounted) return;
     final status = _pack.status;
     if (status.isReady) {
@@ -248,7 +248,8 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _pack.status.isBusy ? null : _download,
+              onPressed:
+                  _pack.status.isBusy ? null : () => _download(update: true),
               icon: const Icon(Icons.download, size: 17, color: Colors.black87),
               label: Text(
                 'Download update',
@@ -357,7 +358,7 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
         return 'Map, campus data, and photos';
       case OfflinePackState.downloading:
         return status.totalBytes == null
-            ? '${status.downloadSizeLabel} • Finding total…'
+            ? 'Loading download details…'
             : status.downloadProgressLabel;
       case OfflinePackState.incomplete:
         return '${status.downloadProgressLabel} • Paused';

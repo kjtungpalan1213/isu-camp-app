@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -98,6 +99,12 @@ class FakeQuery:
 class OfflineEndpointTests(unittest.TestCase):
     def setUp(self):
         self.database = FakeDatabase()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        from app.services.offline_pack import OfflinePackStore
+        pack_patch = patch.object(campus, 'offline_pack_store', return_value=OfflinePackStore(directory.name))
+        pack_patch.start()
+        self.addCleanup(pack_patch.stop)
         database_patch = patch.object(campus, 'supabase', self.database)
         database_patch.start()
         self.addCleanup(database_patch.stop)
@@ -149,22 +156,12 @@ class OfflineEndpointTests(unittest.TestCase):
         after = self.client.get('/campus/offline/bundle').json()['version']
         self.assertNotEqual(before, after)
 
-    def test_manifest_reports_the_version_without_the_payload(self):
-        bundle = self.client.get('/campus/offline/bundle').json()
-        response = self.client.get('/campus/offline/manifest')
-        self.assertEqual(response.status_code, 200)
-        manifest = response.json()
-
-        self.assertEqual(manifest['version'], bundle['version'])
-        self.assertEqual(manifest['buildingCount'], 1)
-        self.assertEqual(manifest['roomCount'], 1)
-        self.assertEqual(manifest['photoCount'], 2)
-        self.assertEqual(manifest['pathwayCount'], 1)
-        self.assertGreater(manifest['dataBytes'], 0)
-        self.assertNotIn('buildings', manifest)
-        self.assertNotIn('graph', manifest)
-        self.assertLess(len(response.content), len(
-            self.client.get('/campus/offline/bundle').content))
+    def test_manifest_requires_a_previously_published_pack(self):
+        # No database query or per-file size discovery in the request path.
+        with patch.object(campus, 'offline_bundle_payload', side_effect=AssertionError('must not build here')):
+            response = self.client.get('/campus/offline/manifest')
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('being prepared', response.json()['detail'])
 
     def test_an_unchanged_bundle_revalidates_instead_of_downloading_again(self):
         first = self.client.get('/campus/offline/bundle')

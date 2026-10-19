@@ -114,7 +114,10 @@ def bundle_photo_urls(buildings):
 
 
 def offline_manifest(bundle):
-    """Update check payload: the version plus what a download would cost."""
+    """Legacy dataset-only counts; dataBytes excludes photos and tiles.
+
+    Published complete-pack manifests come from OfflinePackStore instead.
+    """
     buildings = bundle.get("buildings") or []
     graph = bundle.get("graph") or {}
     return {

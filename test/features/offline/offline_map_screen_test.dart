@@ -1,14 +1,13 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:isu_camp_app/features/offline/screens/offline_map_screen.dart';
 import 'package:isu_camp_app/features/offline/models/offline_pack.dart';
 import 'package:isu_camp_app/features/offline/services/offline_file_store.dart';
 import 'package:isu_camp_app/features/offline/services/offline_pack_service.dart';
+import 'offline_test_backend.dart';
 
 /// What the screen shows for each pack state, and that opening it never
 /// downloads anything. The download, update, and delete mechanics themselves
@@ -78,25 +77,20 @@ void main() {
     }
   });
 
-  MockClient backend(String version) => MockClient((request) async {
-        final url = request.url.toString();
-        requests.add(url);
-        if (url.endsWith('/campus/offline/bundle')) {
-          return http.Response(jsonEncode(_bundle(version)), 200);
-        }
-        if (url.endsWith('/campus/offline/manifest')) {
-          return http.Response(jsonEncode({'version': version}), 200);
-        }
-        return http.Response.bytes([0x89, 0x50, 0x4E, 0x47], 200);
-      });
+  http.Client backend(String version) {
+    final backend =
+        PackBackend(PublishedPackFixture(version, bundle: _bundle(version)));
+    backend.intercept = (request) async {
+      requests.add(request.url.toString());
+      return null;
+    };
+    return backend.client;
+  }
 
-  // Only the coarsest zoom, so these UI tests download nine tiles, not 1126.
   OfflinePackService serviceFor(String version) => OfflinePackService(
-        store: OfflineFileStore(rootPath: root.path),
-        client: backend(version),
-        baseUrl: () => _baseUrl,
-        maxTileZoom: 15,
-      );
+      store: OfflineFileStore(rootPath: root.path),
+      client: backend(version),
+      baseUrl: () => _baseUrl);
 
   /// The pack reads and writes real files, which only progress outside the
   /// widget tester's fake clock.
@@ -134,7 +128,7 @@ void main() {
 
     pack.show(pack.status.copyWith(clearTotalBytes: true));
     await tester.pump();
-    expect(subtitle(tester), '13.5 MB • Finding total…');
+    expect(subtitle(tester), 'Loading download details…');
     expect(
         tester
             .widget<LinearProgressIndicator>(
@@ -226,21 +220,13 @@ void main() {
     late OfflinePackService pack;
     pack = OfflinePackService(
       store: OfflineFileStore(rootPath: root.path),
-      client: MockClient((request) async {
-        final url = request.url.toString();
-        if (url.endsWith('/campus/offline/bundle')) {
-          return http.Response(jsonEncode(_bundle('v1')), 200);
-        }
-        if (request.method == 'HEAD') {
-          return http.Response.bytes([1, 2, 3, 4], 200);
-        }
-        if (url.contains('tile.openstreetmap.org')) {
-          pack.pause();
-        }
-        return http.Response.bytes([0x89, 0x50, 0x4E, 0x47], 200);
-      }),
+      client: (PackBackend(PublishedPackFixture('v1', bundle: _bundle('v1')))
+            ..intercept = (request) async {
+              if (request.url.path.contains('/tiles/')) pack.pause();
+              return null;
+            })
+          .client,
       baseUrl: () => _baseUrl,
-      maxTileZoom: 15,
     );
     await tester.runAsync(() => pack.download());
     await openScreen(tester, pack);
