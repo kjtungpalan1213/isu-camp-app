@@ -115,8 +115,9 @@ void main() {
                 .route
                 .mode,
             mode);
-        // Moving fast to the east: the map turns heading-up (east at the
-        // top) and the camera keeps moving between one-second GPS fixes.
+        // Moving fast to the east while on the north-bound route: the map
+        // keeps the route ahead at the top, not the direction of travel, and
+        // the camera keeps moving between one-second GPS fixes.
         final camera = () => tester
             .widget<FlutterMap>(find.byType(FlutterMap))
             .mapController!
@@ -125,7 +126,7 @@ void main() {
         await tester.pump();
         elapsed = const Duration(seconds: 1);
         await tester.pump(const Duration(seconds: 1));
-        expect(camera().rotation, closeTo(270, 1));
+        expect((camera().rotation + 180) % 360 - 180, closeTo(0, 1));
         // At least one second ahead at 10 m/s, at most the 1.5 s cap.
         expect(const Distance()(const LatLng(16.7202, 121.69), camera().center),
             inInclusiveRange(10, 15));
