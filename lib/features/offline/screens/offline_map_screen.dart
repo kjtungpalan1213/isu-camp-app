@@ -357,7 +357,7 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
         return 'Map, campus data, and photos';
       case OfflinePackState.downloading:
         return status.totalBytes == null
-            ? 'Calculating download size…'
+            ? '${status.downloadSizeLabel} • Finding total…'
             : status.downloadProgressLabel;
       case OfflinePackState.incomplete:
         return '${status.downloadProgressLabel} • Paused';

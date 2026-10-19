@@ -54,6 +54,7 @@ class OfflinePackService extends ChangeNotifier {
   static const String _bundlePath = 'bundle.json';
   static const String _metaPath = 'meta.json';
   static const int _parallelDownloads = 4;
+  static const int _parallelSizeChecks = 8;
 
   /// How many finished files to collect before saving resume progress.
   static const int _checkpointEvery = 40;
@@ -75,6 +76,10 @@ class OfflinePackService extends ChangeNotifier {
   bool _pauseRequested = false;
   final Map<String, int> _receivedBytes = {};
   final Map<String, int> _fileSizes = {};
+  final Set<String> _activeTransfers = {};
+  final Set<String> _downloadPaths = {};
+  int _downloadBaseBytes = 0;
+  Completer<void>? _cancelSizeChecks;
   final Stopwatch _progressClock = Stopwatch()..start();
   int _lastProgressAt = -100;
   Timer? _progressTimer;
@@ -172,7 +177,10 @@ class OfflinePackService extends ChangeNotifier {
 
   /// Asks the running download to stop. Finished files stay on disk.
   void pause() {
-    if (_status.isBusy) _pauseRequested = true;
+    if (_status.isBusy) {
+      _pauseRequested = true;
+      _stopSizeChecks();
+    }
   }
 
   /// Removes every downloaded file and returns the app to online-only.
@@ -187,6 +195,7 @@ class OfflinePackService extends ChangeNotifier {
 
   Future<void> _runDelete() async {
     _pauseRequested = true;
+    _stopSizeChecks();
     await _activeDownload;
     if (!_store.isSupported) return;
     await _store.deleteAll();
@@ -202,6 +211,8 @@ class OfflinePackService extends ChangeNotifier {
       return;
     }
     _pauseRequested = false;
+    _cancelSizeChecks = Completer<void>();
+    _downloadPaths.clear();
     final resumeState = _status.state;
     final previousTotal = _status.totalBytes;
     _update(_status.copyWith(
@@ -279,30 +290,24 @@ class OfflinePackService extends ChangeNotifier {
     await _writeMeta(
         complete: work.isEmpty, generatedAt: bundle['generatedAt']);
 
-    final sizesReady = await _prepareDownloadSizes(work);
-    final remaining =
-        work.entries.where((entry) => !_store.contains(entry.key)).toList();
-    completed = total - remaining.length;
-    _update(_status.copyWith(
-      completedFiles: completed,
-      totalBytes: sizesReady
-          ? _status.bytesOnDisk +
-              remaining.fold<int>(
-                  0, (sum, entry) => sum + _fileSizes[entry.key]!)
-          : null,
-    ));
-    await _writeMeta(
-        complete: remaining.isEmpty, generatedAt: bundle['generatedAt']);
+    _downloadPaths.addAll(work.keys);
+    _downloadBaseBytes = _status.bytesOnDisk;
+    _refreshDownloadTotal();
 
     var failures = 0;
     var checkpoint = completed;
-    final pending = sizesReady ? remaining : <MapEntry<String, Uri>>[];
+    final pending = work.entries.toList();
+    Future<void>? sizeChecks;
     for (var start = 0;
         start < pending.length && !_pauseRequested && failures < _failureBudget;
         start += _parallelDownloads) {
       final batch = pending.skip(start).take(_parallelDownloads);
-      final results = await Future.wait(
-          batch.map((entry) => _fetchInto(entry.key, entry.value)));
+      // Begin payload transfers before size lookups. Metadata must never gate
+      // downloading; GET response headers also supply exact sizes for free.
+      final transfers =
+          Future.wait(batch.map((entry) => _fetchInto(entry.key, entry.value)));
+      sizeChecks ??= _resolveDownloadSizes(work);
+      final results = await transfers;
       for (final saved in results) {
         if (saved) {
           completed++;
@@ -320,6 +325,8 @@ class OfflinePackService extends ChangeNotifier {
       }
     }
 
+    _stopSizeChecks();
+    await sizeChecks;
     final missing = work.keys.where((path) => !_store.contains(path)).length;
     final complete = missing == 0;
     final storedBytes = await _store.bytesOnDisk();
@@ -341,67 +348,68 @@ class OfflinePackService extends ChangeNotifier {
     await _writeMeta(complete: complete, generatedAt: bundle['generatedAt']);
   }
 
-  /// Resolve a stable denominator before showing byte-based progress. HEAD
-  /// avoids downloading tile payloads twice. Hosts without size metadata are
-  /// fetched once here and their completed files are reused by the main loop.
-  Future<bool> _prepareDownloadSizes(Map<String, Uri> work) async {
-    final unknown = work.entries
-        .where((entry) =>
-            !_store.contains(entry.key) && !_fileSizes.containsKey(entry.key))
-        .toList();
-    var failures = 0;
-    for (var start = 0;
-        start < unknown.length && !_pauseRequested && failures < _failureBudget;
-        start += _parallelDownloads) {
-      final results = await Future.wait(unknown
-          .skip(start)
-          .take(_parallelDownloads)
-          .map((entry) => _measureFile(entry.key, entry.value)));
-      for (final measured in results) {
-        failures = measured ? 0 : failures + 1;
-      }
-      if ((start + _parallelDownloads) % _checkpointEvery == 0) {
-        await _writeMeta(complete: false);
+  /// Check missing sizes alongside actual downloads, using a separate bounded
+  /// concurrency limit. No HEAD request is needed for a cached or active file.
+  Future<void> _resolveDownloadSizes(Map<String, Uri> work) async {
+    final pending = work.entries.toList();
+    var next = 0;
+    Future<void> worker() async {
+      while (!_cancelSizeChecks!.isCompleted && next < pending.length) {
+        final entry = pending[next++];
+        await _measureFile(entry.key, entry.value);
       }
     }
-    return work.keys
-        .every((path) => _store.contains(path) || _fileSizes.containsKey(path));
+
+    // A slow host response occupies one worker, rather than stalling a batch.
+    await Future.wait(List.generate(_parallelSizeChecks, (_) => worker()));
   }
 
-  Future<bool> _measureFile(String path, Uri url) async {
+  void _stopSizeChecks() {
+    final cancel = _cancelSizeChecks;
+    if (cancel != null && !cancel.isCompleted) cancel.complete();
+  }
+
+  Future<void> _measureFile(String path, Uri url) async {
+    if (_fileSizes.containsKey(path) ||
+        _activeTransfers.contains(path) ||
+        _store.contains(path) ||
+        _cancelSizeChecks!.isCompleted) return;
     try {
       final response = await _http
-          .send(http.Request('HEAD', url)
+          .send(http.AbortableRequest('HEAD', url,
+              abortTrigger: _cancelSizeChecks!.future)
             ..headers.addAll({
               'User-Agent': campusDownloadUserAgent,
               'Accept-Encoding': 'identity',
             }))
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 10));
       final length = response.contentLength;
-      await response.stream.timeout(const Duration(seconds: 20)).drain<void>();
-      if (response.statusCode == 200 && length != null && length > 0) {
-        _fileSizes[path] = length;
-        return true;
-      }
-      if (response.statusCode == 403 ||
-          response.statusCode == 405 ||
-          response.statusCode == 501 ||
-          response.statusCode == 200) {
-        return await _fetchInto(path, url);
+      await response.stream.timeout(const Duration(seconds: 10)).drain<void>();
+      if (response.statusCode == 200 &&
+          length != null &&
+          length > 0 &&
+          !_fileSizes.containsKey(path)) {
+        _recordSize(path, length);
       }
     } catch (_) {
-      // A failed size check remains resumable, just like a failed transfer.
+      // Unsupported or slow HEAD requests never fail a real download. Its GET
+      // headers or completed payload will supply the precise size instead.
     }
-    return false;
   }
 
   void _recordSize(String path, int length) {
-    final previous = _fileSizes[path];
     _fileSizes[path] = length;
-    if (_status.totalBytes != null && previous != null && previous != length) {
-      _update(_status.copyWith(
-        totalBytes: _status.totalBytes! + length - previous,
-      ));
+    if (_downloadPaths.contains(path)) _refreshDownloadTotal();
+  }
+
+  void _refreshDownloadTotal() {
+    // Publish a denominator only when every required size is known. Counting
+    // from the initial saved bytes avoids double-counting concurrent writes.
+    if (_downloadPaths.any((path) => !_fileSizes.containsKey(path))) return;
+    final total = _downloadBaseBytes +
+        _downloadPaths.fold<int>(0, (sum, path) => sum + _fileSizes[path]!);
+    if (_status.totalBytes != total) {
+      _update(_status.copyWith(totalBytes: total));
     }
   }
 
@@ -455,6 +463,7 @@ class OfflinePackService extends ChangeNotifier {
   }
 
   Future<bool> _fetchInto(String path, Uri url) async {
+    _activeTransfers.add(path);
     var savedBytes = 0;
     try {
       final bytes = await _receive(path, url, const Duration(seconds: 30));
@@ -467,6 +476,7 @@ class OfflinePackService extends ChangeNotifier {
     } finally {
       // Failed partial responses are discarded; only committed files survive
       // pause/restart. Moving bytes to disk must not double-count them.
+      _activeTransfers.remove(path);
       _receivedBytes.remove(path);
       _publishTransferProgress(force: true, savedBytes: savedBytes);
     }
@@ -533,6 +543,7 @@ class OfflinePackService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _stopSizeChecks();
     _progressTimer?.cancel();
     super.dispose();
   }

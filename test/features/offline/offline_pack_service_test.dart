@@ -186,6 +186,78 @@ void main() {
     expect(service.tileImage(19, 1, 1), isNull);
   });
 
+  test('downloads payloads immediately without an upfront size-request pass',
+      () async {
+    final assetMethods = <String>[];
+    final service = OfflinePackService(
+      store: OfflineFileStore(rootPath: root.path),
+      baseUrl: () => _baseUrl,
+      maxTileZoom: 15,
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/offline/bundle')) {
+          return http.Response(jsonEncode(_bundle('v1')), 200);
+        }
+        assetMethods.add(request.method);
+        return http.Response.bytes([1, 2, 3], 200);
+      }),
+    );
+    await service.download();
+    expect(assetMethods.first, 'GET',
+        reason: 'the first asset request must transfer data, not check sizes');
+    expect(
+        assetMethods.where((method) => method == 'GET').length, _photoCount + 9,
+        reason: 'size lookups must not duplicate payloads');
+    expect(service.status.isReady, isTrue);
+    expect(service.status.totalBytes, service.status.bytesOnDisk);
+  });
+
+  for (final shouldPause in [false, true]) {
+    test(
+        'stalled size lookups do not block ${shouldPause ? 'pause' : 'completion'} or publish estimates',
+        () async {
+      var cancelledHeads = 0;
+      final publishedTotals = <int>[];
+      late OfflinePackService service;
+      service = OfflinePackService(
+        store: OfflineFileStore(rootPath: root.path),
+        baseUrl: () => _baseUrl,
+        maxTileZoom: 15,
+        client: MockClient.streaming((request, _) async {
+          if (request.method == 'HEAD') {
+            await (request as http.Abortable).abortTrigger!;
+            cancelledHeads++;
+            throw http.RequestAbortedException(request.url);
+          }
+          final bytes = request.url.path.endsWith('/offline/bundle')
+              ? utf8.encode(jsonEncode(_bundle('v1')))
+              : List.filled(request.url.path.length, 1);
+          return http.StreamedResponse(Stream.value(bytes), 200,
+              contentLength: bytes.length);
+        }),
+      );
+      service.addListener(() {
+        if (service.status.totalBytes != null) {
+          publishedTotals.add(service.status.totalBytes!);
+        }
+        if (shouldPause &&
+            service.status.isBusy &&
+            service.status.completedFiles > 1) service.pause();
+      });
+      await service.download().timeout(const Duration(seconds: 5));
+      expect(cancelledHeads, greaterThan(0),
+          reason: 'stalled metadata requests must be cancelled');
+      expect(service.status.state,
+          shouldPause ? OfflinePackState.incomplete : OfflinePackState.ready);
+      if (!shouldPause) {
+        expect(publishedTotals, isNotEmpty);
+        expect(publishedTotals, everyElement(service.status.bytesOnDisk),
+            reason:
+                'no guessed total may be published while sizes are missing');
+      }
+      expect(service.status.bytesInFlight, 0);
+    });
+  }
+
   for (final headStatus in [200, 403, 405]) {
     test('missing HEAD size ($headStatus) downloads each payload only once',
         () async {
@@ -414,7 +486,6 @@ void main() {
     expect(downloadedSoFar, lessThan(_tileCount));
 
     recorder.requests.clear();
-    final measuredBeforeResume = recorder.sizeRequests.length;
     final resumedBytes = <int>[];
     service.addListener(() {
       if (service.status.isBusy)
@@ -423,7 +494,7 @@ void main() {
     await service.download();
 
     expect(resumedBytes.first, savedBytes);
-    expect(recorder.sizeRequests.length, measuredBeforeResume,
+    expect(recorder.sizeRequests.toSet().length, recorder.sizeRequests.length,
         reason: 'known sizes are reused when resuming');
     expect(service.status.state, OfflinePackState.ready);
     expect(service.status.completedFiles, _totalFiles);

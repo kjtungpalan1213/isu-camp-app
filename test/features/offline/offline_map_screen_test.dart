@@ -132,6 +132,17 @@ void main() {
             .value,
         13.5 / 32);
 
+    pack.show(pack.status.copyWith(clearTotalBytes: true));
+    await tester.pump();
+    expect(subtitle(tester), '13.5 MB • Finding total…');
+    expect(
+        tester
+            .widget<LinearProgressIndicator>(
+                find.byType(LinearProgressIndicator))
+            .value,
+        isNull);
+    pack.show(pack.status.copyWith(totalBytes: 32 * 1024 * 1024));
+
     pack.show(pack.status.copyWith(bytesInFlight: 1024 * 1024));
     await tester.pump();
     expect(subtitle(tester), '14.0 MB / 32.0 MB');
