@@ -9,6 +9,13 @@ void main() {
     LatLng(16.721, 121.69),
     LatLng(16.721, 121.691),
   ];
+  // A hairpin: about 111 m north, 11 m east, then back south alongside.
+  const hairpin = [
+    LatLng(16.72, 121.69),
+    LatLng(16.721, 121.69),
+    LatLng(16.721, 121.6901032),
+    LatLng(16.72, 121.6901032),
+  ];
   const distance = Distance();
   final start = DateTime(2026);
   DateTime after(int seconds) => start.add(Duration(seconds: seconds));
@@ -110,13 +117,6 @@ void main() {
   });
 
   test('a later leg close by does not swallow the route still ahead', () {
-    // A hairpin: about 111 m north, 11 m east, then back south alongside.
-    const hairpin = [
-      LatLng(16.72, 121.69),
-      LatLng(16.721, 121.69),
-      LatLng(16.721, 121.6901032),
-      LatLng(16.72, 121.6901032),
-    ];
     final trim = RouteTrim(hairpin, start);
     // About 44 m up the first leg.
     trim.ahead(const LatLng(16.720396, 121.69), at: after(30));
@@ -129,6 +129,36 @@ void main() {
       expect(ahead, hasLength(4));
       expect(distance(ahead.first, position), lessThan(1));
     }
+  });
+
+  test('wobble while standing still does not let a later leg swallow the route',
+      () {
+    final trim = RouteTrim(hairpin, start);
+    // Standing about 44 m up the first leg, fixes a few meters either way.
+    for (var second = 1; second <= 30; second++) {
+      trim.ahead(
+          LatLng(16.720396 + (second.isEven ? 0.00003 : -0.00003), 121.69),
+          at: after(second));
+    }
+    // 8 m sideways error: nearer the returning leg than the one walked.
+    final ahead =
+        trim.ahead(const LatLng(16.720405, 121.690075), at: after(31));
+    expect(ahead, hasLength(4));
+  });
+
+  test('a line that starts late on a hairpin still catches up with the user',
+      () {
+    // The route arrives while the user is already on the returning leg,
+    // beside about 45 m of the first leg.
+    final trim = RouteTrim(hairpin, start);
+    var ahead = hairpin;
+    var position = hairpin.first;
+    for (var second = 0; second <= 30; second++) {
+      position = LatLng(16.720405 - 0.0000126 * second, 121.6901032);
+      ahead = trim.ahead(position, at: after(second));
+    }
+    expect(ahead, hasLength(2));
+    expect(distance(ahead.first, position), lessThan(1));
   });
 
   test('a position that may not advance the line still draws it', () {

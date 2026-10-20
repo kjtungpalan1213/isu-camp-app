@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -25,8 +26,13 @@ void main() {
       .single
       .points;
 
-  Future<void> navigate(
-      WidgetTester tester, Future<void> Function() walk) async {
+  Future<void> navigate(WidgetTester tester, Future<void> Function() walk,
+      {List<List<double>> path = const [
+        [16.72, 121.69],
+        [16.721, 121.69],
+        [16.721, 121.691]
+      ],
+      Duration rerouteDelay = Duration.zero}) async {
     final previousGps = GeolocatorPlatform.instance;
     gps = TestGps()..current = TestGps.fix(16.72, 121.69, speed: 0);
     GeolocatorPlatform.instance = gps;
@@ -37,6 +43,7 @@ void main() {
       await tester.binding.setSurfaceSize(null);
     });
     final tile = File('assets/images/logo_isu_png.png').readAsBytesSync();
+    var routeRequests = 0;
 
     await http.runWithClient(() async {
       await tester.binding.setSurfaceSize(const Size(800, 1200));
@@ -57,7 +64,7 @@ void main() {
       await tester.tap(find.text('View Route'));
       await tester.pump();
       // Route details still show the whole route.
-      expect(drawnRoute(tester), hasLength(3));
+      expect(drawnRoute(tester), hasLength(path.length));
       await tester.ensureVisible(find.text('Start'));
       await tester.tap(find.text('Start'));
       for (var i = 0;
@@ -87,6 +94,8 @@ void main() {
                     200);
               }
               if (request.url.path == '/campus/routes') {
+                // Later requests are reroutes, which may answer slowly.
+                if (routeRequests++ > 0) await Future.delayed(rerouteDelay);
                 return http.Response(
                     jsonEncode({
                       'routes': [
@@ -97,11 +106,7 @@ void main() {
                             'distanceMeters': 220,
                             'estimatedMinutes': 3,
                             'startNodeName': 'Gate',
-                            'pathPoints': [
-                              [16.72, 121.69],
-                              [16.721, 121.69],
-                              [16.721, 121.691]
-                            ],
+                            'pathPoints': path,
                             'steps': [],
                           }
                       ]
@@ -158,5 +163,35 @@ void main() {
       expect(distance(drawnRoute(tester).first, const LatLng(16.7207, 121.69)),
           lessThan(1));
     });
+  });
+
+  testWidgets('a slow reroute starts the line where the user is by then',
+      (tester) async {
+    // A hairpin: about 111 m north, 11 m east, then back south alongside.
+    LatLng alongHairpin(double meters) => meters <= 111.2
+        ? LatLng(16.72 + meters / 111.2 * 0.001, 121.69)
+        : meters <= 122.2
+            ? LatLng(16.721, 121.69 + (meters - 111.2) / 11 * 0.0001032)
+            : LatLng(16.721 - (meters - 122.2) / 111.2 * 0.001, 121.6901032);
+    await navigate(tester, () async {
+      // The route from the start takes 10 s to arrive; meanwhile the user
+      // drives round the hairpin to beside the first leg.
+      for (var second = 1; second <= 11; second++) {
+        elapsed += const Duration(seconds: 1);
+        gps.move(alongHairpin(18.8 * math.min(second, 10)).latitude,
+            alongHairpin(18.8 * math.min(second, 10)).longitude,
+            speed: 0);
+        await tester.pump(const Duration(seconds: 1));
+      }
+      await tester.pump();
+      expect(drawnRoute(tester), hasLength(2));
+      expect(
+          distance(drawnRoute(tester).first, alongHairpin(188)), lessThan(1));
+    }, path: const [
+      [16.72, 121.69],
+      [16.721, 121.69],
+      [16.721, 121.6901032],
+      [16.72, 121.6901032]
+    ], rerouteDelay: const Duration(seconds: 10));
   });
 }

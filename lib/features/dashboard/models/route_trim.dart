@@ -15,6 +15,11 @@ const double routeTrimAllowanceMeters = 25;
 /// route, which still lets the line catch up after a GPS gap.
 const double routeTrimMaxSpeed = 20;
 
+/// GPS wobble of someone standing still lands within this distance either way
+/// of the progress so far. A match farther behind is not taken as the user:
+/// it is more likely an earlier leg alongside while the user is ahead.
+const double routeTrimWobbleMeters = 10;
+
 /// The part of a route still ahead of the user during navigation.
 ///
 /// Progress only moves forward, so GPS wobble never brings walked route back.
@@ -22,7 +27,8 @@ const double routeTrimMaxSpeed = 20;
 /// reached, so a nearby later leg (a hairpin) can't swallow the route between.
 /// A new route (after a reroute) needs a new [RouteTrim].
 class RouteTrim {
-  /// The user is at the start of the route at [startedAt].
+  /// The user is at the start of the route at [startedAt], such as when it
+  /// was requested from their position.
   RouteTrim(this.points, DateTime startedAt) : _placedAt = startedAt;
 
   final List<LatLng> points;
@@ -62,9 +68,13 @@ class RouteTrim {
         toMeters: _walkedMeters +
             routeTrimAllowanceMeters +
             routeTrimMaxSpeed * seconds);
-    if (projection.awayMeters > routeTrimMaxOffsetMeters) return;
+    if (projection.awayMeters > routeTrimMaxOffsetMeters ||
+        projection.alongMeters < _walkedMeters - routeTrimWobbleMeters) {
+      return;
+    }
     // On the route near the progress so far, even if not ahead of it, so the
-    // plausible stretch ahead is measured from now.
+    // plausible stretch ahead is measured from now. Matches well behind it
+    // don't count, so they can't hold the line back while the user is ahead.
     _placedAt = at;
     _walkedMeters = math.max(_walkedMeters, projection.alongMeters);
   }

@@ -175,7 +175,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
       return points;
     }
     if (!identical(_routeTrim?.points, points)) {
-      _routeTrim = RouteTrim(points, _navigationNow);
+      // A reroute starts where the user was when it was requested, which can
+      // be well behind them by the time it arrives.
+      _routeTrim = RouteTrim(points, _lastRerouteAt ?? _navigationNow);
     }
     return _routeTrim!
         .ahead(position, at: _navigationNow, advance: _hasUsableFix);
