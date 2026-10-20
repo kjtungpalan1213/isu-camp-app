@@ -20,6 +20,7 @@ import '../models/navigation_history.dart';
 import '../models/navigation_camera.dart';
 import '../models/navigation_heading.dart';
 import '../models/navigation_progress.dart';
+import '../models/route_trim.dart';
 import '../services/campus_service.dart';
 import '../services/navigation_history_service.dart';
 import '../widgets/location_puck.dart';
@@ -112,6 +113,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   final ValueNotifier<double?> _navigationHeading = ValueNotifier(null);
   Timer? _followTimer;
   final ValueNotifier<LatLng?> _navigationPosition = ValueNotifier(null);
+  RouteTrim? _routeTrim;
   int _previewStepIndex = 0;
   String? _historySessionId;
   Future<void> _historyWriteQueue = Future<void>.value();
@@ -154,6 +156,17 @@ class _MapViewScreenState extends State<MapViewScreen> {
       ];
 
   List<LatLng> get _routePoints => _walkingRoute?.points ?? const [];
+
+  /// While navigating, only the route still ahead of the user is drawn. A
+  /// reroute brings a new point list, which starts a new trim.
+  List<LatLng> _visibleRoutePoints(LatLng? position) {
+    final points = _routePoints;
+    if (_navigationState != NavigationUiState.navigating || position == null) {
+      return points;
+    }
+    if (!identical(_routeTrim?.points, points)) _routeTrim = RouteTrim(points);
+    return _routeTrim!.ahead(position);
+  }
 
   bool get _showsTransportOriginMarker =>
       _navigationState == NavigationUiState.chooseRoute ||
@@ -1006,16 +1019,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     (_navigationState == NavigationUiState.routeDetails ||
                         _navigationState == NavigationUiState.routePreview ||
                         _navigationState == NavigationUiState.navigating))
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: _routePoints,
-                        strokeWidth: 5.0,
-                        color: navigationRouteBlue,
-                        borderColor: Colors.white,
-                        borderStrokeWidth: 2.0,
-                      ),
-                    ],
+                  // Follows the smoothed position, so the line shrinks with
+                  // the arrow between GPS fixes.
+                  ValueListenableBuilder<LatLng?>(
+                    valueListenable: _navigationPosition,
+                    builder: (context, position, _) => PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: _visibleRoutePoints(position),
+                          strokeWidth: 5.0,
+                          color: navigationRouteBlue,
+                          borderColor: Colors.white,
+                          borderStrokeWidth: 2.0,
+                        ),
+                      ],
+                    ),
                   ),
 
                 // Building names fade first; icons fade at the farthest zoom.
