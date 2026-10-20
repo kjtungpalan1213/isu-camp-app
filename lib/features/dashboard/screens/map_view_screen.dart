@@ -157,15 +157,28 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   List<LatLng> get _routePoints => _walkingRoute?.points ?? const [];
 
+  /// The latest fix is accurate and fresh enough to guide by.
+  bool get _hasUsableFix =>
+      _gpsAccuracy.isFinite &&
+      _gpsAccuracy <= 25 &&
+      _gpsAccuracy >= 0 &&
+      _lastPositionAt != null &&
+      _navigationNow.difference(_lastPositionAt!) <=
+          const Duration(seconds: 20);
+
   /// While navigating, only the route still ahead of the user is drawn. A
-  /// reroute brings a new point list, which starts a new trim.
+  /// reroute brings a new point list, which starts a new trim. Positions from
+  /// a fix guidance would ignore don't move the line.
   List<LatLng> _visibleRoutePoints(LatLng? position) {
     final points = _routePoints;
     if (_navigationState != NavigationUiState.navigating || position == null) {
       return points;
     }
-    if (!identical(_routeTrim?.points, points)) _routeTrim = RouteTrim(points);
-    return _routeTrim!.ahead(position);
+    if (!identical(_routeTrim?.points, points)) {
+      _routeTrim = RouteTrim(points, _navigationNow);
+    }
+    return _routeTrim!
+        .ahead(position, at: _navigationNow, advance: _hasUsableFix);
   }
 
   bool get _showsTransportOriginMarker =>
@@ -755,12 +768,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         location == null ||
         destination == null ||
         _navigationState != NavigationUiState.navigating) return;
-    if (!_gpsAccuracy.isFinite ||
-        _gpsAccuracy > 25 ||
-        _gpsAccuracy < 0 ||
-        _lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20)) {
+    if (!_hasUsableFix) {
       _refreshNavigationProgress();
       return;
     }

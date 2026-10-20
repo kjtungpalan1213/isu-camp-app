@@ -14,27 +14,35 @@ import 'package:latlong2/latlong.dart';
 import 'live_navigation_test.dart' show TestGps;
 
 void main() {
-  testWidgets('the route line shrinks behind the user while navigating',
-      (tester) async {
+  const distance = Distance();
+  late TestGps gps;
+  // Walking takes time: the line only follows plausible progress, so tests
+  // move the clock along with the user.
+  var elapsed = Duration.zero;
+  List<LatLng> drawnRoute(WidgetTester tester) => tester
+      .widget<PolylineLayer>(find.byType(PolylineLayer))
+      .polylines
+      .single
+      .points;
+
+  Future<void> navigate(
+      WidgetTester tester, Future<void> Function() walk) async {
     final previousGps = GeolocatorPlatform.instance;
-    final gps = TestGps()..current = TestGps.fix(16.72, 121.69, speed: 0);
+    gps = TestGps()..current = TestGps.fix(16.72, 121.69, speed: 0);
     GeolocatorPlatform.instance = gps;
+    elapsed = Duration.zero;
     addTearDown(() async {
       GeolocatorPlatform.instance = previousGps;
       await gps.fixes.close();
       await tester.binding.setSurfaceSize(null);
     });
     final tile = File('assets/images/logo_isu_png.png').readAsBytesSync();
-    const distance = Distance();
-    List<LatLng> drawnRoute() => tester
-        .widget<PolylineLayer>(find.byType(PolylineLayer))
-        .polylines
-        .single
-        .points;
 
     await http.runWithClient(() async {
       await tester.binding.setSurfaceSize(const Size(800, 1200));
-      await tester.pumpWidget(const MaterialApp(home: MapViewScreen()));
+      await tester.pumpWidget(MaterialApp(
+          home: MapViewScreen(
+              navigationClock: () => DateTime.now().add(elapsed))));
       await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(find.byKey(const ValueKey('building-icon-1')));
       await tester.pump();
@@ -49,7 +57,7 @@ void main() {
       await tester.tap(find.text('View Route'));
       await tester.pump();
       // Route details still show the whole route.
-      expect(drawnRoute(), hasLength(3));
+      expect(drawnRoute(tester), hasLength(3));
       await tester.ensureVisible(find.text('Start'));
       await tester.tap(find.text('Start'));
       for (var i = 0;
@@ -58,25 +66,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.byType(ActiveNavigationHud), findsOneWidget);
-
-      gps.move(16.7205, 121.69, speed: 0);
-      await tester.pump();
-      expect(distance(drawnRoute().first, const LatLng(16.7205, 121.69)),
-          lessThan(1));
-      expect(drawnRoute(), hasLength(3));
-
-      // A fix slightly behind does not bring the walked route back.
-      gps.move(16.7203, 121.69, speed: 0);
-      await tester.pump();
-      expect(distance(drawnRoute().first, const LatLng(16.7205, 121.69)),
-          lessThan(1));
-
-      // Round the corner: the first leg is gone.
-      gps.move(16.721, 121.6905, speed: 0);
-      await tester.pump();
-      expect(drawnRoute(), hasLength(2));
-      expect(distance(drawnRoute().first, const LatLng(16.721, 121.6905)),
-          lessThan(1));
+      await walk();
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -121,5 +111,52 @@ void main() {
               return http.Response.bytes(tile, 200,
                   headers: {'content-type': 'image/png'});
             }));
+  }
+
+  testWidgets('the route line shrinks behind the user while navigating',
+      (tester) async {
+    await navigate(tester, () async {
+      elapsed += const Duration(seconds: 6);
+      gps.move(16.7205, 121.69, speed: 0);
+      await tester.pump();
+      expect(distance(drawnRoute(tester).first, const LatLng(16.7205, 121.69)),
+          lessThan(1));
+      expect(drawnRoute(tester), hasLength(3));
+
+      // A fix slightly behind does not bring the walked route back.
+      gps.move(16.7203, 121.69, speed: 0);
+      await tester.pump();
+      expect(distance(drawnRoute(tester).first, const LatLng(16.7205, 121.69)),
+          lessThan(1));
+
+      // Round the corner: the first leg is gone.
+      elapsed += const Duration(seconds: 6);
+      gps.move(16.721, 121.6905, speed: 0);
+      await tester.pump();
+      expect(drawnRoute(tester), hasLength(2));
+      expect(distance(drawnRoute(tester).first, const LatLng(16.721, 121.6905)),
+          lessThan(1));
+    });
+  });
+
+  testWidgets('an inaccurate fix does not trim the route line', (tester) async {
+    await navigate(tester, () async {
+      elapsed += const Duration(seconds: 6);
+      gps.move(16.7205, 121.69, speed: 0);
+      await tester.pump();
+      // Round the corner, but too inaccurate to count as progress.
+      elapsed += const Duration(seconds: 6);
+      gps.move(16.721, 121.6905, accuracy: 80, speed: 0);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(drawnRoute(tester), hasLength(3));
+
+      gps.move(16.7207, 121.69, speed: 0);
+      await tester.pump();
+      await tester.pump();
+      expect(drawnRoute(tester), hasLength(3));
+      expect(distance(drawnRoute(tester).first, const LatLng(16.7207, 121.69)),
+          lessThan(1));
+    });
   });
 }
