@@ -17,6 +17,12 @@ void main() {
     LatLng(16.72, 121.6901032),
   ];
   const distance = Distance();
+  double lengthOf(List<LatLng> points) => [
+        for (var i = 1; i < points.length; i++)
+          distance(points[i - 1], points[i])
+      ].fold(0.0, (sum, length) => sum + length);
+  // [meters] up the first leg of either route.
+  LatLng up(double meters) => LatLng(16.72 + meters / 111.2 * 0.001, 121.69);
   final start = DateTime(2026);
   DateTime after(int seconds) => start.add(Duration(seconds: seconds));
   late TravelOdometer odometer;
@@ -29,22 +35,23 @@ void main() {
         travelled: odometer.metersAt(after(seconds)), advance: advance);
   }
 
+  // As if the user had travelled far since the route began, so anywhere on
+  // it is a plausible place for them to be.
+  RouteTrim travelledFar(List<LatLng> points) => RouteTrim(points, -1000);
+
   test('the line starts where the user is on the route', () {
-    final ahead =
-        fix(RouteTrim(route, 0), const LatLng(16.7205, 121.69), 40, speed: 1.4);
+    final ahead = fix(travelledFar(route), const LatLng(16.7205, 121.69), 1);
     expect(distance(ahead.first, const LatLng(16.7205, 121.69)), lessThan(1));
     expect(ahead.sublist(1), route.sublist(1));
   });
 
   test('a position off to the side snaps onto the route', () {
-    final ahead = fix(RouteTrim(route, 0), const LatLng(16.7205, 121.69005), 40,
-        speed: 1.4);
+    final ahead = fix(travelledFar(route), const LatLng(16.7205, 121.69005), 1);
     expect(distance(ahead.first, const LatLng(16.7205, 121.69)), lessThan(1));
   });
 
   test('past a corner, the walked leg is gone', () {
-    final ahead = fix(RouteTrim(route, 0), const LatLng(16.721, 121.6905), 120,
-        speed: 1.4);
+    final ahead = fix(travelledFar(route), const LatLng(16.721, 121.6905), 1);
     expect(ahead, hasLength(2));
     expect(ahead.last, route.last);
     expect(distance(ahead.first, const LatLng(16.721, 121.6905)), lessThan(1));
@@ -55,22 +62,22 @@ void main() {
   });
 
   test('walked route never grows back', () {
-    final trim = RouteTrim(route, 0);
-    fix(trim, const LatLng(16.7208, 121.69), 90, speed: 1.4);
-    final ahead = fix(trim, const LatLng(16.7203, 121.69), 91);
+    final trim = travelledFar(route);
+    fix(trim, const LatLng(16.7208, 121.69), 1);
+    final ahead = fix(trim, const LatLng(16.7203, 121.69), 2);
     expect(distance(ahead.first, const LatLng(16.7208, 121.69)), lessThan(1));
   });
 
   test('positions far from the route do not move the trim', () {
-    final trim = RouteTrim(route, 0);
-    fix(trim, const LatLng(16.7202, 121.69), 20, speed: 1.4);
+    final trim = travelledFar(route);
+    fix(trim, const LatLng(16.7202, 121.69), 1);
     // Well east of the route: a wrong GPS fix, not progress.
-    final ahead = fix(trim, const LatLng(16.7205, 121.693), 21, speed: 1.4);
+    final ahead = fix(trim, const LatLng(16.7205, 121.693), 2);
     expect(distance(ahead.first, const LatLng(16.7202, 121.69)), lessThan(1));
   });
 
   test('at the destination, only the end point is left', () {
-    final ahead = fix(RouteTrim(route, 0), route.last, 160, speed: 1.4);
+    final ahead = fix(travelledFar(route), route.last, 1);
     expect(ahead, hasLength(1));
     expect(distance(ahead.single, route.last), lessThan(1));
   });
@@ -83,9 +90,8 @@ void main() {
     final trim = RouteTrim(route, 0);
     // About 1.4 m/s, one fix a second.
     for (var second = 1; second <= 60; second++) {
-      final position = LatLng(16.72 + 0.0000126 * second, 121.69);
-      final ahead = fix(trim, position, second, speed: 1.4);
-      expect(distance(ahead.first, position), lessThan(1));
+      final ahead = fix(trim, up(1.4 * second), second, speed: 1.4);
+      expect(distance(ahead.first, up(1.4 * second)), lessThan(1));
     }
   });
 
@@ -93,60 +99,71 @@ void main() {
     final trim = RouteTrim(route, 0);
     // About 18 m/s up the first leg.
     for (var second = 1; second <= 5; second++) {
-      final position = LatLng(16.72 + 0.000162 * second, 121.69);
-      final ahead = fix(trim, position, second, speed: 18);
-      expect(distance(ahead.first, position), lessThan(1));
+      final ahead = fix(trim, up(18.0 * second), second, speed: 18);
+      expect(distance(ahead.first, up(18.0 * second)), lessThan(1));
     }
   });
 
-  test('after a long GPS gap, the line catches up with the user', () {
+  test('after a long GPS gap, the line catches up gradually, never ahead', () {
     final trim = RouteTrim(route, 0);
-    fix(trim, const LatLng(16.7201, 121.69), 8, speed: 1.4);
-    // No fixes for a minute; the next one is moving, about 150 m on.
-    final ahead = fix(trim, const LatLng(16.721, 121.6905), 68, speed: 2.5);
-    expect(ahead, hasLength(2));
-    expect(distance(ahead.first, const LatLng(16.721, 121.6905)), lessThan(1));
+    for (var second = 1; second <= 8; second++) {
+      fix(trim, up(1.4 * second), second, speed: 1.4);
+    }
+    // No fixes for a minute, in which the user went on to 80 m; they keep
+    // walking. The gap is not taken on trust, so the line holds back...
+    late List<LatLng> ahead;
+    for (var second = 68; second <= 88; second++) {
+      final at = 80 + 1.4 * (second - 68);
+      ahead = fix(trim, up(at), second, speed: 1.4);
+      expect(lengthOf(route) - lengthOf(ahead), lessThanOrEqualTo(at + 2));
+    }
+    // ...and has caught up with them within 20 s.
+    expect(distance(ahead.first, up(80 + 1.4 * 20)), lessThan(1));
   });
 
-  test('a position too far ahead is caught up with as the user moves', () {
+  test('a position too far ahead is caught up with gradually, never passed',
+      () {
     final trim = RouteTrim(route, 0);
-    fix(trim, const LatLng(16.7201, 121.69), 8, speed: 1.4);
-    // Past the corner a second later is implausible, but moving on from
-    // there is not: the line follows once the user has moved a little.
-    var ahead = fix(trim, const LatLng(16.721, 121.6905), 9, speed: 1.4);
-    expect(ahead, hasLength(3));
-    for (var second = 10; second <= 30; second++) {
-      ahead = fix(trim, const LatLng(16.721, 121.6905), second, speed: 1.4);
+    for (var second = 1; second <= 8; second++) {
+      fix(trim, up(1.4 * second), second, speed: 1.4);
     }
-    expect(ahead, hasLength(2));
-    expect(distance(ahead.first, const LatLng(16.721, 121.6905)), lessThan(1));
+    // 69 m on a second later is implausible, so the line stays put...
+    var ahead = fix(trim, up(80), 9, speed: 1.4);
+    expect(distance(ahead.first, up(11.2)), lessThan(1));
+    // ...and as the user walks on from there, it catches up within 20 s.
+    for (var second = 10; second <= 29; second++) {
+      final at = 80 + 1.4 * (second - 9);
+      ahead = fix(trim, up(at), second, speed: 1.4);
+      expect(lengthOf(route) - lengthOf(ahead), lessThanOrEqualTo(at + 2));
+    }
+    expect(distance(ahead.first, up(80 + 1.4 * 20)), lessThan(1));
   });
 
   test('a later leg close by does not swallow the route still ahead', () {
     final trim = RouteTrim(hairpin, 0);
-    // About 44 m up the first leg.
-    fix(trim, const LatLng(16.720396, 121.69), 32, speed: 1.4);
+    // Walk about 44 m up the first leg.
+    for (var second = 1; second <= 32; second++) {
+      fix(trim, up(1.4 * second), second, speed: 1.4);
+    }
     // 8 m sideways error: nearer the returning leg than the one walked.
     var ahead = fix(trim, const LatLng(16.720405, 121.690075), 33, speed: 1.4);
     expect(ahead, hasLength(4));
     for (var second = 34; second <= 37; second++) {
-      final position = LatLng(16.720405 + 0.0000126 * (second - 33), 121.69);
-      ahead = fix(trim, position, second, speed: 1.4);
+      ahead = fix(trim, up(1.4 * second), second, speed: 1.4);
       expect(ahead, hasLength(4));
-      expect(distance(ahead.first, position), lessThan(1));
+      expect(distance(ahead.first, up(1.4 * second)), lessThan(1));
     }
   });
 
   test('wobble while standing still does not let a later leg swallow the route',
       () {
     final trim = RouteTrim(hairpin, 0);
-    fix(trim, const LatLng(16.720396, 121.69), 32, speed: 1.4);
-    // Standing about 44 m up the first leg, fixes a few meters either way.
+    for (var second = 1; second <= 32; second++) {
+      fix(trim, up(1.4 * second), second, speed: 1.4);
+    }
+    // Standing about 45 m up the first leg, fixes a few meters either way.
     for (var second = 33; second <= 62; second++) {
-      fix(
-          trim,
-          LatLng(16.720396 + (second.isEven ? 0.00003 : -0.00003), 121.69),
-          second);
+      fix(trim, up(second.isEven ? 48 : 42), second);
     }
     // 8 m sideways error: nearer the returning leg than the one walked.
     expect(fix(trim, const LatLng(16.720405, 121.690075), 63), hasLength(4));
@@ -154,38 +171,53 @@ void main() {
 
   test('a corrected fix while standing still does not open the way ahead', () {
     final trim = RouteTrim(hairpin, 0);
-    // Standing about 44 m up the first leg.
-    fix(trim, const LatLng(16.720396, 121.69), 32, speed: 1.4);
-    // One fix 13 m ahead, then corrected fixes back where the user stands.
-    fix(trim, const LatLng(16.720513, 121.69), 33);
+    for (var second = 1; second <= 32; second++) {
+      fix(trim, up(1.4 * second), second, speed: 1.4);
+    }
+    // Standing about 45 m up the first leg. One fix 13 m ahead, then
+    // corrected fixes back where the user stands.
+    fix(trim, up(58), 33);
     for (var second = 34; second <= 42; second++) {
-      fix(trim, const LatLng(16.720396, 121.69), second);
+      fix(trim, up(44.8), second);
     }
     // 8 m sideways error: nearer the returning leg than the one walked.
-    final ahead = fix(trim, const LatLng(16.720396, 121.690075), 43);
+    final ahead = fix(trim, const LatLng(16.720403, 121.690075), 43);
     expect(ahead, hasLength(4));
   });
 
-  test('a line that starts late on a hairpin still catches up with the user',
+  test('a fix after a gap in GPS does not let a later leg swallow the route',
       () {
-    // The route arrives while the user is already on the returning leg,
-    // beside about 45 m of the first leg.
-    final trim = RouteTrim(hairpin, odometer.metersAt(start));
-    var ahead = hairpin;
-    var position = hairpin.first;
-    for (var second = 0; second <= 30; second++) {
-      position = LatLng(16.720405 - 0.0000126 * second, 121.6901032);
-      ahead = fix(trim, position, second, speed: 1.4);
+    final trim = RouteTrim(hairpin, 0);
+    // Walk about 45 m up the first leg, then stand there.
+    for (var second = 1; second <= 32; second++) {
+      fix(trim, up(1.4 * second), second, speed: 1.4);
     }
-    expect(ahead, hasLength(2));
-    expect(distance(ahead.first, position), lessThan(1));
+    for (var second = 33; second <= 35; second++) {
+      fix(trim, up(44.8), second);
+    }
+    // No fixes for 20 s, then one moving 1.4 m on with 8 m sideways error.
+    final ahead =
+        fix(trim, const LatLng(16.720416, 121.690075), 55, speed: 1.4);
+    expect(ahead, hasLength(4));
+  });
+
+  test('a line that starts late on a hairpin never erases route ahead', () {
+    // The route arrives while the user is already on the returning leg,
+    // beside about 45 m of the first leg, and they walk on to the end.
+    final trim = RouteTrim(hairpin, odometer.metersAt(start));
+    for (var second = 0; second <= 30; second++) {
+      final position = LatLng(16.720405 - 0.0000126 * second, 121.6901032);
+      final ahead = fix(trim, position, second, speed: 1.4);
+      // Ambiguous, so the line shows too much: at least all that is left.
+      expect(lengthOf(ahead),
+          greaterThanOrEqualTo(distance(position, hairpin.last) - 2));
+    }
   });
 
   test('a position that may not advance the line still draws it', () {
-    final trim = RouteTrim(route, 0);
-    fix(trim, const LatLng(16.7202, 121.69), 20, speed: 1.4);
-    final ahead = fix(trim, const LatLng(16.721, 121.6905), 80,
-        speed: 1.4, advance: false);
+    final trim = travelledFar(route);
+    fix(trim, const LatLng(16.7202, 121.69), 1);
+    final ahead = fix(trim, const LatLng(16.721, 121.6905), 2, advance: false);
     expect(ahead, hasLength(3));
     expect(distance(ahead.first, const LatLng(16.7202, 121.69)), lessThan(1));
   });
@@ -202,16 +234,18 @@ void main() {
       for (var second = 1; second <= 10; second++) {
         odometer.record(after(second), 2);
       }
-      expect(odometer.metersAt(after(10)), closeTo(20, 0.01));
+      expect(odometer.metersAt(after(10)), closeTo(18, 0.01));
       expect(odometer.metersAt(start.add(const Duration(milliseconds: 10500))),
-          closeTo(21, 0.01));
+          closeTo(19, 0.01));
       // Without fixes, it stops growing.
-      expect(odometer.metersAt(after(60)), closeTo(23, 0.01));
+      expect(odometer.metersAt(after(60)), closeTo(21, 0.01));
     });
 
-    test('moving off after a gap in fixes counts the gap', () {
+    test('a gap in fixes is not credited at the next fix\'s speed', () {
+      odometer.record(after(1), 2);
       odometer.record(after(60), 2.5);
-      expect(odometer.metersAt(after(60)), closeTo(150, 0.01));
+      // Only what the last speed carried past its fix.
+      expect(odometer.metersAt(after(60)), closeTo(3, 0.01));
     });
   });
 }

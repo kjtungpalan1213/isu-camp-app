@@ -22,6 +22,9 @@ const double routeTrimWobbleMeters = 10;
 
 /// The part of a route still ahead of the user during navigation.
 ///
+/// When GPS is ambiguous, the line shows too much rather than erasing route
+/// the user hasn't walked.
+///
 /// Progress only moves forward, so GPS wobble never brings walked route back.
 /// It is only looked for in the stretch the user could have reached by
 /// moving, so a nearby later leg (a hairpin) can't swallow the route between.
@@ -66,16 +69,11 @@ class RouteTrim {
 
   void _advance(LatLng position, double travelled) {
     final moved = math.max(0.0, travelled - _placedTravelled);
-    // Moving this far without once being placed near the progress so far
-    // means the progress is wrong (an earlier leg alongside, or a route that
-    // started behind the user), not GPS wobble: look along the whole route.
     final projection = RouteProjection.locate(points, position,
         fromMeters: _walkedMeters - routeTrimAllowanceMeters,
-        toMeters: moved > routeTrimAllowanceMeters
-            ? double.infinity
-            : _walkedMeters +
-                routeTrimAllowanceMeters +
-                routeTrimTravelMargin * moved);
+        toMeters: _walkedMeters +
+            routeTrimAllowanceMeters +
+            routeTrimTravelMargin * moved);
     if (projection.awayMeters > routeTrimMaxOffsetMeters ||
         projection.alongMeters < _walkedMeters - routeTrimWobbleMeters) {
       return;
@@ -89,7 +87,8 @@ class RouteTrim {
 }
 
 /// How far the user has moved, by GPS speed alone: time passing while
-/// standing still, or without fixes, is not movement.
+/// standing still, or without fixes, is not movement. It undercounts rather
+/// than overcounts, so the route line errs towards showing too much.
 class TravelOdometer {
   double _meters = 0;
   DateTime? _at;
@@ -110,16 +109,14 @@ class TravelOdometer {
   }
 
   /// A fix moving at [speed] m/s at [at]; 0 for a fix not to be trusted. The
-  /// time since the last fix counts at the faster of the two, so moving off
-  /// after a gap in fixes still counts the gap.
+  /// time since the last fix counts only as [metersAt] carried it, so a gap
+  /// in fixes isn't credited at the speed the next fix reports.
   void record(DateTime at, double speed) {
     final since = _at;
-    final usable = speed.isFinite && speed > 0 ? speed : 0.0;
-    if (since != null && at.isAfter(since)) {
-      _meters +=
-          math.max(_speed, usable) * at.difference(since).inMilliseconds / 1000;
+    if (since == null || at.isAfter(since)) {
+      _meters = metersAt(at);
+      _at = at;
     }
-    if (since == null || at.isAfter(since)) _at = at;
-    _speed = usable;
+    _speed = speed.isFinite && speed > 0 ? speed : 0.0;
   }
 }

@@ -17,14 +17,29 @@ import 'live_navigation_test.dart' show TestGps;
 void main() {
   const distance = Distance();
   late TestGps gps;
-  // Walking takes time: the line only follows plausible progress, so tests
-  // move the clock along with the user.
+  // The line only follows plausible progress, so tests move the clock along
+  // with the user.
   var elapsed = Duration.zero;
   List<LatLng> drawnRoute(WidgetTester tester) => tester
       .widget<PolylineLayer>(find.byType(PolylineLayer))
       .polylines
       .single
       .points;
+
+  // Drives from [from] to [to] in one-second fixes, at the speed and heading
+  // that cover the way: travel is only believed from GPS speed.
+  Future<void> drive(WidgetTester tester, LatLng from, LatLng to, int seconds,
+      {double heading = 0}) async {
+    final speed = distance(from, to) / seconds;
+    for (var second = 1; second <= seconds; second++) {
+      final t = second / seconds;
+      elapsed += const Duration(seconds: 1);
+      gps.move(from.latitude + (to.latitude - from.latitude) * t,
+          from.longitude + (to.longitude - from.longitude) * t,
+          speed: speed, heading: heading);
+      await tester.pump();
+    }
+  }
 
   Future<void> navigate(WidgetTester tester, Future<void> Function() walk,
       {List<List<double>> path = const [
@@ -121,10 +136,8 @@ void main() {
   testWidgets('the route line shrinks behind the user while navigating',
       (tester) async {
     await navigate(tester, () async {
-      // Fixes report the speed that covers the distance since the last one.
-      elapsed += const Duration(seconds: 6);
-      gps.move(16.7205, 121.69, speed: 10);
-      await tester.pump();
+      await drive(tester, const LatLng(16.72, 121.69),
+          const LatLng(16.7205, 121.69), 5);
       expect(distance(drawnRoute(tester).first, const LatLng(16.7205, 121.69)),
           lessThan(1));
       expect(drawnRoute(tester), hasLength(3));
@@ -136,9 +149,11 @@ void main() {
           lessThan(1));
 
       // Round the corner: the first leg is gone.
-      elapsed += const Duration(seconds: 6);
-      gps.move(16.721, 121.6905, speed: 18, heading: 90);
-      await tester.pump();
+      await drive(tester, const LatLng(16.7205, 121.69),
+          const LatLng(16.721, 121.69), 4);
+      await drive(tester, const LatLng(16.721, 121.69),
+          const LatLng(16.721, 121.6905), 4,
+          heading: 90);
       expect(drawnRoute(tester), hasLength(2));
       expect(distance(drawnRoute(tester).first, const LatLng(16.721, 121.6905)),
           lessThan(1));
@@ -147,16 +162,16 @@ void main() {
 
   testWidgets('an inaccurate fix does not trim the route line', (tester) async {
     await navigate(tester, () async {
-      elapsed += const Duration(seconds: 6);
-      gps.move(16.7205, 121.69, speed: 10);
-      await tester.pump();
+      await drive(tester, const LatLng(16.72, 121.69),
+          const LatLng(16.7205, 121.69), 5);
       // Round the corner, but too inaccurate to count as progress.
-      elapsed += const Duration(seconds: 6);
+      elapsed += const Duration(seconds: 1);
       gps.move(16.721, 121.6905, accuracy: 80, speed: 0);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(drawnRoute(tester), hasLength(3));
 
+      elapsed += const Duration(seconds: 1);
       gps.move(16.7207, 121.69, speed: 0);
       await tester.pump();
       await tester.pump();
