@@ -114,6 +114,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
   Timer? _followTimer;
   final ValueNotifier<LatLng?> _navigationPosition = ValueNotifier(null);
   RouteTrim? _routeTrim;
+  final TravelOdometer _odometer = TravelOdometer();
+  // The odometer when the latest reroute was requested from the user.
+  double? _rerouteTravelled;
   int _previewStepIndex = 0;
   String? _historySessionId;
   Future<void> _historyWriteQueue = Future<void>.value();
@@ -174,13 +177,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (_navigationState != NavigationUiState.navigating || position == null) {
       return points;
     }
+    final travelled = _odometer.metersAt(_navigationNow);
     if (!identical(_routeTrim?.points, points)) {
       // A reroute starts where the user was when it was requested, which can
       // be well behind them by the time it arrives.
-      _routeTrim = RouteTrim(points, _lastRerouteAt ?? _navigationNow);
+      _routeTrim = RouteTrim(points, _rerouteTravelled ?? travelled);
     }
     return _routeTrim!
-        .ahead(position, at: _navigationNow, advance: _hasUsableFix);
+        .ahead(position, travelled: travelled, advance: _hasUsableFix);
   }
 
   bool get _showsTransportOriginMarker =>
@@ -479,6 +483,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
       }
     });
 
+    // Only trusted fixes count as movement.
+    _odometer.record(_navigationNow, _hasUsableFix ? _fixSpeed : 0);
     _startCompass();
     _refreshNavigationProgress(countFix: true);
 
@@ -638,6 +644,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       _routeError = null;
       _isRerouting = false;
       _lastRerouteAt = null;
+      _rerouteTravelled = null;
       _offRouteFixes = 0;
       _arrivalFixes = 0;
     });
@@ -701,6 +708,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       _arrivalFixes = 0;
       _offRouteFixes = 0;
       _lastRerouteAt = null;
+      _rerouteTravelled = null;
     });
     _gpsWatchdog?.cancel();
     _gpsWatchdog = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -780,6 +788,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
             const Duration(seconds: 15)) return;
     final generation = _navigationGeneration;
     _lastRerouteAt = _navigationNow;
+    _rerouteTravelled = _odometer.metersAt(_navigationNow);
     setState(() {
       _isRerouting = true;
       _routeError = null;

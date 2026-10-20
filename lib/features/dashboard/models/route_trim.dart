@@ -1,19 +1,19 @@
 import 'dart:math' as math;
 import 'package:latlong2/latlong.dart';
+import 'navigation_camera.dart';
 import 'navigation_progress.dart';
 
 /// Farther than this from the route, a position no longer counts as progress
 /// along it. Matches the off-route distance used for guidance.
 const double routeTrimMaxOffsetMeters = 30;
 
-/// Progress may land this far from the progress so far however little time
-/// has passed: about the GPS error navigation still accepts.
+/// Progress may land this far from the progress so far without the user
+/// moving: about the GPS error navigation still accepts.
 const double routeTrimAllowanceMeters = 25;
 
-/// Faster than anyone travels on campus, cars included. Progress reaches only
-/// as far ahead as this speed allows since the user was last placed on the
-/// route, which still lets the line catch up after a GPS gap.
-const double routeTrimMaxSpeed = 20;
+/// Distance travelled by GPS speed may undercount the distance along the
+/// route, so the stretch ahead grows half as much again.
+const double routeTrimTravelMargin = 1.5;
 
 /// GPS wobble of someone standing still lands within this distance either way
 /// of the progress so far. A match farther behind is not taken as the user:
@@ -23,59 +23,103 @@ const double routeTrimWobbleMeters = 10;
 /// The part of a route still ahead of the user during navigation.
 ///
 /// Progress only moves forward, so GPS wobble never brings walked route back.
-/// It is only looked for in the stretch the user could plausibly have
-/// reached, so a nearby later leg (a hairpin) can't swallow the route between.
+/// It is only looked for in the stretch the user could have reached by
+/// moving, so a nearby later leg (a hairpin) can't swallow the route between.
+/// Travel is a [TravelOdometer] reading, so standing still opens nothing.
 /// A new route (after a reroute) needs a new [RouteTrim].
 class RouteTrim {
-  /// The user is at the start of the route at [startedAt], such as when it
-  /// was requested from their position.
-  RouteTrim(this.points, DateTime startedAt) : _placedAt = startedAt;
+  /// The user was at the start of the route when the odometer read
+  /// [startTravelled], such as when it was requested from their position.
+  RouteTrim(this.points, double startTravelled)
+      : _placedTravelled = startTravelled;
 
   final List<LatLng> points;
   double _walkedMeters = 0;
-  DateTime _placedAt;
+  double _placedTravelled;
 
-  /// The route from [position], snapped onto it, to the destination. Without
-  /// [advance] (for an untrusted fix), the line is drawn but doesn't move.
+  /// The route from [position], snapped onto it, to the destination, with the
+  /// odometer at [travelled]. Without [advance] (for an untrusted fix), the
+  /// line is drawn but doesn't move.
   List<LatLng> ahead(LatLng position,
-      {required DateTime at, bool advance = true}) {
+      {required double travelled, bool advance = true}) {
     if (points.isEmpty) return const [];
-    if (advance) _advance(position, at);
+    if (advance) _advance(position, travelled);
     if (_walkedMeters <= 0) return points;
     const distance = Distance();
-    var travelled = 0.0;
+    var covered = 0.0;
     for (var i = 1; i < points.length; i++) {
       final a = points[i - 1];
       final b = points[i];
       final length = distance(a, b);
-      if (travelled + length > _walkedMeters) {
-        final t = length == 0 ? 0.0 : (_walkedMeters - travelled) / length;
+      if (covered + length > _walkedMeters) {
+        final t = length == 0 ? 0.0 : (_walkedMeters - covered) / length;
         return [
           LatLng(a.latitude + (b.latitude - a.latitude) * t,
               a.longitude + (b.longitude - a.longitude) * t),
           ...points.sublist(i),
         ];
       }
-      travelled += length;
+      covered += length;
     }
     return [points.last];
   }
 
-  void _advance(LatLng position, DateTime at) {
-    final seconds = math.max(0, at.difference(_placedAt).inMilliseconds) / 1000;
+  void _advance(LatLng position, double travelled) {
+    final moved = math.max(0.0, travelled - _placedTravelled);
+    // Moving this far without once being placed near the progress so far
+    // means the progress is wrong (an earlier leg alongside, or a route that
+    // started behind the user), not GPS wobble: look along the whole route.
     final projection = RouteProjection.locate(points, position,
         fromMeters: _walkedMeters - routeTrimAllowanceMeters,
-        toMeters: _walkedMeters +
-            routeTrimAllowanceMeters +
-            routeTrimMaxSpeed * seconds);
+        toMeters: moved > routeTrimAllowanceMeters
+            ? double.infinity
+            : _walkedMeters +
+                routeTrimAllowanceMeters +
+                routeTrimTravelMargin * moved);
     if (projection.awayMeters > routeTrimMaxOffsetMeters ||
         projection.alongMeters < _walkedMeters - routeTrimWobbleMeters) {
       return;
     }
     // On the route near the progress so far, even if not ahead of it, so the
-    // plausible stretch ahead is measured from now. Matches well behind it
-    // don't count, so they can't hold the line back while the user is ahead.
-    _placedAt = at;
+    // stretch ahead is measured from here. Matches well behind it don't count,
+    // so they can't hold the line back while the user is ahead.
+    _placedTravelled = travelled;
     _walkedMeters = math.max(_walkedMeters, projection.alongMeters);
+  }
+}
+
+/// How far the user has moved, by GPS speed alone: time passing while
+/// standing still, or without fixes, is not movement.
+class TravelOdometer {
+  double _meters = 0;
+  DateTime? _at;
+  double _speed = 0;
+
+  /// Meters moved by [at]. The last speed carries on only as long as the
+  /// position is predicted from it.
+  double metersAt(DateTime at) {
+    final since = _at;
+    if (since == null) return _meters;
+    final elapsed = at.difference(since);
+    final carried = elapsed < Duration.zero
+        ? Duration.zero
+        : elapsed > maxPrediction
+            ? maxPrediction
+            : elapsed;
+    return _meters + _speed * carried.inMilliseconds / 1000;
+  }
+
+  /// A fix moving at [speed] m/s at [at]; 0 for a fix not to be trusted. The
+  /// time since the last fix counts at the faster of the two, so moving off
+  /// after a gap in fixes still counts the gap.
+  void record(DateTime at, double speed) {
+    final since = _at;
+    final usable = speed.isFinite && speed > 0 ? speed : 0.0;
+    if (since != null && at.isAfter(since)) {
+      _meters +=
+          math.max(_speed, usable) * at.difference(since).inMilliseconds / 1000;
+    }
+    if (since == null || at.isAfter(since)) _at = at;
+    _speed = usable;
   }
 }

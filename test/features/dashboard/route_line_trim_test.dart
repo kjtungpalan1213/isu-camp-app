@@ -121,8 +121,9 @@ void main() {
   testWidgets('the route line shrinks behind the user while navigating',
       (tester) async {
     await navigate(tester, () async {
+      // Fixes report the speed that covers the distance since the last one.
       elapsed += const Duration(seconds: 6);
-      gps.move(16.7205, 121.69, speed: 0);
+      gps.move(16.7205, 121.69, speed: 10);
       await tester.pump();
       expect(distance(drawnRoute(tester).first, const LatLng(16.7205, 121.69)),
           lessThan(1));
@@ -136,7 +137,7 @@ void main() {
 
       // Round the corner: the first leg is gone.
       elapsed += const Duration(seconds: 6);
-      gps.move(16.721, 121.6905, speed: 0);
+      gps.move(16.721, 121.6905, speed: 18, heading: 90);
       await tester.pump();
       expect(drawnRoute(tester), hasLength(2));
       expect(distance(drawnRoute(tester).first, const LatLng(16.721, 121.6905)),
@@ -147,7 +148,7 @@ void main() {
   testWidgets('an inaccurate fix does not trim the route line', (tester) async {
     await navigate(tester, () async {
       elapsed += const Duration(seconds: 6);
-      gps.move(16.7205, 121.69, speed: 0);
+      gps.move(16.7205, 121.69, speed: 10);
       await tester.pump();
       // Round the corner, but too inaccurate to count as progress.
       elapsed += const Duration(seconds: 6);
@@ -175,12 +176,17 @@ void main() {
             : LatLng(16.721 - (meters - 122.2) / 111.2 * 0.001, 121.6901032);
     await navigate(tester, () async {
       // The route from the start takes 10 s to arrive; meanwhile the user
-      // drives round the hairpin to beside the first leg.
+      // drives round the hairpin to beside the first leg, then stops.
       for (var second = 1; second <= 11; second++) {
+        final meters = 18.8 * math.min(second, 10);
         elapsed += const Duration(seconds: 1);
-        gps.move(alongHairpin(18.8 * math.min(second, 10)).latitude,
-            alongHairpin(18.8 * math.min(second, 10)).longitude,
-            speed: 0);
+        gps.move(alongHairpin(meters).latitude, alongHairpin(meters).longitude,
+            speed: second > 10 ? 0 : 18.8,
+            heading: meters <= 111.2
+                ? 0
+                : meters <= 122.2
+                    ? 90
+                    : 180);
         await tester.pump(const Duration(seconds: 1));
       }
       await tester.pump();
