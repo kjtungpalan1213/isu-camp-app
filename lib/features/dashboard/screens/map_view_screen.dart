@@ -448,6 +448,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
           type: NavigationOriginType.currentLocation,
         );
         _hasSelectedOrigin = isuEchagueBounds.contains(_currentUserLocation!);
+      } else if (!_hasSelectedOrigin &&
+          _navigationState == NavigationUiState.chooseRoute &&
+          isuEchagueBounds.contains(_currentUserLocation!)) {
+        // A fix that arrives before any starting point is chosen becomes
+        // the default. A starting point the user picked is never replaced.
+        _applyDefaultOrigin();
       }
     });
 
@@ -569,6 +575,29 @@ class _MapViewScreenState extends State<MapViewScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _updateNavigationCamera(force: true);
     });
+  }
+
+  /// Starts new directions from the user's position when it is known inside
+  /// campus. Otherwise no starting point is chosen yet.
+  void _applyDefaultOrigin() {
+    final location = _currentUserLocation;
+    final insideCampus =
+        location != null && isuEchagueBounds.contains(location);
+    _selectedOrigin = insideCampus
+        ? NavigationOrigin(
+            id: 'current_location',
+            label: 'My Current Location',
+            coordinate: location,
+            type: NavigationOriginType.currentLocation,
+          )
+        : _defaultOrigin;
+    _hasSelectedOrigin = insideCampus;
+  }
+
+  /// Asks for a fix in the background when directions open without one, so
+  /// the user's position can still become the starting point.
+  void _locateForDefaultOrigin() {
+    if (!_hasSelectedOrigin) _initializeCurrentLocation();
   }
 
   Future<void> _useCurrentLocationAsOrigin() async {
@@ -1500,12 +1529,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                               .where(
                                                   (r) => r.id == entry.roomId)
                                               .firstOrNull;
-                                          _hasSelectedOrigin = false;
-                                          _selectedOrigin = _defaultOrigin;
+                                          _applyDefaultOrigin();
                                           _walkingRoute = null;
                                           _navigationState =
                                               NavigationUiState.chooseRoute;
                                         });
+                                        _locateForDefaultOrigin();
                                       },
                                     ),
                                   ),
@@ -1807,21 +1836,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   setState(() {
                     _historySessionId = null;
                     _selectedRoom = null;
-                    _hasSelectedOrigin = false;
-                    _selectedOrigin = _defaultOrigin;
+                    _applyDefaultOrigin();
                     _walkingRoute = null;
                     _navigationState = NavigationUiState.chooseRoute;
                   });
+                  _locateForDefaultOrigin();
                 },
                 onRoomDirectionsTap: (room) {
                   setState(() {
                     _historySessionId = null;
                     _selectedRoom = room;
                     _walkingRoute = null;
-                    _hasSelectedOrigin = false;
-                    _selectedOrigin = _defaultOrigin;
+                    _applyDefaultOrigin();
                     _navigationState = NavigationUiState.chooseRoute;
                   });
+                  _locateForDefaultOrigin();
                 },
               ),
             ),

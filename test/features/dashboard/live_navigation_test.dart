@@ -65,6 +65,7 @@ void main() {
         await tester.binding.setSurfaceSize(null);
       });
       var requests = 0;
+      var failNextRoute = false;
       var elapsed = Duration.zero;
       final tile = File('assets/images/logo_isu_png.png').readAsBytesSync();
       await http.runWithClient(() async {
@@ -143,6 +144,8 @@ void main() {
             .progress!;
         expect(advanced.remainingMeters, lessThan(initial.remainingMeters));
         final beforeReroute = requests;
+        // The first off-route refresh fails, so the retry path is exercised.
+        failNextRoute = true;
         gps.move(16.7205, 121.6895);
         await tester.pump();
         gps.move(16.7205, 121.6895);
@@ -198,9 +201,11 @@ void main() {
                 if (request.url.path == '/campus/routes') {
                   requests++;
                   expect(jsonDecode(request.body)['mode'], mode.name);
-                  if (requests == 3)
+                  if (failNextRoute) {
+                    failNextRoute = false;
                     return http.Response(
                         '{"detail":"Temporarily unavailable"}', 503);
+                  }
                   return http.Response(
                       jsonEncode({
                         'routes': [
