@@ -162,6 +162,18 @@ class _MapViewScreenState extends State<MapViewScreen> {
           _navigationState == NavigationUiState.routeDetails) &&
       building.id == _selectedBuilding?.id;
 
+  /// Search and category filters never hide the destination of the route on
+  /// the map.
+  List<CampusBuilding> _withRouteDestination(List<CampusBuilding> buildings) {
+    final destination = _selectedBuilding;
+    if (destination == null ||
+        !_highlightsDestination(destination) ||
+        buildings.any((building) => building.id == destination.id)) {
+      return buildings;
+    }
+    return [...buildings, destination];
+  }
+
   bool get _showsTransportOriginMarker =>
       _navigationState == NavigationUiState.chooseRoute ||
       _navigationState == NavigationUiState.routeDetails ||
@@ -936,6 +948,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
     final filteredBuildings = _getFilteredBuildings();
+    final mapBuildings = _withRouteDestination(filteredBuildings);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F5),
@@ -989,7 +1002,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
                 PolygonLayer(
                   polygons: [
-                    ...filteredBuildings
+                    ...mapBuildings
                         .where((building) =>
                             building.polygonCoordinates.length >= 3 &&
                             !_highlightsDestination(building))
@@ -1001,7 +1014,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                               borderStrokeWidth: 1.5,
                             )),
                     // Drawn last so the destination sits above its neighbours.
-                    ...filteredBuildings
+                    ...mapBuildings
                         .where((building) =>
                             building.polygonCoordinates.length >= 3 &&
                             _highlightsDestination(building))
@@ -1044,7 +1057,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   valueListenable: _mapZoom,
                   builder: (context, zoom, _) => MarkerLayer(
                     rotate: true,
-                    markers: filteredBuildings.map((building) {
+                    markers: mapBuildings.map((building) {
                       final isSelected = _selectedBuilding?.id == building.id;
                       final markerStyle = buildingMarkerStyle(building);
                       final opacity =
@@ -1123,7 +1136,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   valueListenable: _mapZoom,
                   builder: (context, zoom, _) => MarkerLayer(
                     rotate: true,
-                    markers: filteredBuildings.map((building) {
+                    markers: mapBuildings.map((building) {
                       return Marker(
                         point: building.coordinate,
                         width: 120,
