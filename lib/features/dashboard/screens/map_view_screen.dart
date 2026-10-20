@@ -71,6 +71,13 @@ class MapViewScreen extends StatefulWidget {
 class _MapViewScreenState extends State<MapViewScreen> {
   DateTime get _navigationNow =>
       widget.navigationClock?.call() ?? DateTime.now();
+
+  /// Whether the last GPS fix is recent enough to navigate or start from.
+  bool get _hasFreshFix =>
+      _lastPositionAt != null &&
+      _navigationNow.difference(_lastPositionAt!) <=
+          const Duration(seconds: 20);
+
   static const NavigationOrigin _defaultOrigin = NavigationOrigin(
     id: 'main_gate',
     label: 'ISU Main Gate',
@@ -375,6 +382,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         if (!mounted) return;
         _positionSubscription?.cancel();
         _positionSubscription = null;
+        // The last fix is no longer current, so it can't start directions.
+        _lastPositionAt = null;
         setState(() {
           _locationStatus =
               'GPS is unavailable. Check Location Services and permissions.';
@@ -577,12 +586,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
     });
   }
 
-  /// Starts new directions from the user's position when it is known inside
-  /// campus. Otherwise no starting point is chosen yet.
+  /// Starts new directions from the user's position when a fresh fix is
+  /// known inside campus. Otherwise no starting point is chosen yet.
   void _applyDefaultOrigin() {
     final location = _currentUserLocation;
     final insideCampus =
-        location != null && isuEchagueBounds.contains(location);
+        location != null && _hasFreshFix && isuEchagueBounds.contains(location);
     _selectedOrigin = insideCampus
         ? NavigationOrigin(
             id: 'current_location',
@@ -683,9 +692,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     await _initializeCurrentLocation();
     if (!mounted || _navigationState != NavigationUiState.routeDetails) return;
     if (_currentUserLocation == null ||
-        _lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20) ||
+        !_hasFreshFix ||
         !isuEchagueBounds.contains(_currentUserLocation!)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
@@ -706,9 +713,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _gpsWatchdog?.cancel();
     _gpsWatchdog = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted || _navigationState != NavigationUiState.navigating) return;
-      if (_lastPositionAt == null ||
-          _navigationNow.difference(_lastPositionAt!) >
-              const Duration(seconds: 20)) {
+      if (!_hasFreshFix) {
         _arrivalFixes = 0;
         _offRouteFixes = 0;
         setState(() =>
@@ -729,9 +734,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (_navigationState != NavigationUiState.navigating ||
         route == null ||
         location == null) return;
-    if (_lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20)) {
+    if (!_hasFreshFix) {
       setState(() =>
           _navigationStatus = 'GPS signal lost. Waiting for your location…');
       _arrivalFixes = 0;
@@ -774,9 +777,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (!_gpsAccuracy.isFinite ||
         _gpsAccuracy > 25 ||
         _gpsAccuracy < 0 ||
-        _lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20)) {
+        !_hasFreshFix) {
       _refreshNavigationProgress();
       return;
     }

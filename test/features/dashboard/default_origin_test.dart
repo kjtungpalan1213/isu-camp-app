@@ -12,9 +12,10 @@ import 'package:isu_camp_app/features/dashboard/widgets/navigation_sheets.dart';
 
 import 'live_navigation_test.dart' show TestGps;
 
-/// Holds the first fix back until the test releases it.
+/// Holds the first fix back until the test releases it. Assign a new
+/// completer to hold back the next one.
 class DelayedGps extends TestGps {
-  final firstFix = Completer<Position>();
+  var firstFix = Completer<Position>();
   @override
   Future<Position> getCurrentPosition({LocationSettings? locationSettings}) =>
       firstFix.isCompleted ? Future.value(current) : firstFix.future;
@@ -144,6 +145,76 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(originText(tester), 'Other Hall');
       expect(routeRequests.last['origin']['type'], isNot('currentLocation'));
+    });
+  });
+  testWidgets('a fix lost to a GPS error is not preselected', (tester) async {
+    final gps = DelayedGps();
+    await run(tester, gps, (routeRequests) async {
+      gps.firstFix.complete(gps.current);
+      await tester.pump();
+      gps.fixes.addError(Exception('Location services were turned off'));
+      await tester.pump();
+      gps.firstFix = Completer<Position>();
+      await openDirections(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(originText(tester), isEmpty);
+      expect(routeRequests, isEmpty);
+      // The background request restarts location and its fix is used.
+      gps.firstFix.complete(gps.current);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(originText(tester), 'My Current Location');
+    });
+  });
+
+  testWidgets('a stale fix is not preselected', (tester) async {
+    final stale = TestGps.fix(16.72, 121.69);
+    final gps = TestGps()
+      ..current = Position(
+          latitude: stale.latitude,
+          longitude: stale.longitude,
+          timestamp: DateTime.now().subtract(const Duration(minutes: 1)),
+          accuracy: stale.accuracy,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0);
+    await run(tester, gps, (routeRequests) async {
+      await openDirections(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(originText(tester), isEmpty);
+      expect(routeRequests, isEmpty);
+    });
+  });
+
+  testWidgets('a fix arriving mid-search keeps the query and picker',
+      (tester) async {
+    final gps = DelayedGps();
+    await run(tester, gps, (routeRequests) async {
+      await openDirections(tester);
+      final field = find.byKey(const ValueKey('route-origin-field'));
+      await tester.tap(field);
+      await tester.pump();
+      await tester.enterText(field, 'other');
+      await tester.pump();
+      gps.firstFix.complete(gps.current);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(originText(tester), 'other');
+      final otherHall = find.descendant(
+          of: find.byType(ChooseRouteSheet), matching: find.text('Other Hall'));
+      expect(otherHall, findsOneWidget);
+      await tester.tap(otherHall);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(originText(tester), 'Other Hall');
+      expect(routeRequests.last['origin']['buildingId'], '2');
+      gps.move(16.7201, 121.69);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(originText(tester), 'Other Hall');
+      expect(routeRequests.last['origin']['buildingId'], '2');
     });
   });
 }
