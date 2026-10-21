@@ -78,8 +78,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
     type: NavigationOriginType.mainGate,
   );
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   final MapController _mapController = MapController();
   final ValueNotifier<double> _mapZoom = ValueNotifier(_initialCampusZoom);
+  List<NavigationHistoryEntry> _recentHistory = [];
 
   NavigationUiState _navigationState = NavigationUiState.idle;
   CampusBuilding? _selectedBuilding;
@@ -269,16 +271,33 @@ class _MapViewScreenState extends State<MapViewScreen> {
   void initState() {
     super.initState();
     OfflinePackService.instance.addListener(_onOfflinePackChanged);
+    _searchFocusNode.addListener(() {
+      if (mounted) setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadBuildings();
       _initializeCurrentLocation();
       _checkOfflineMapUpdate();
+      _loadRecentHistory();
     });
   }
 
   void _onOfflinePackChanged() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadRecentHistory() async {
+    final token = UserSession.accessToken;
+    if (token == null) return;
+    try {
+      final history = await NavigationHistoryService.load();
+      if (mounted) {
+        setState(() {
+          _recentHistory = history.take(6).toList();
+        });
+      }
+    } catch (_) {}
   }
 
   /// Asks the backend once per session whether the stored map is stale. A new
@@ -317,6 +336,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   void dispose() {
     OfflinePackService.instance.removeListener(_onOfflinePackChanged);
     _searchController.dispose();
+    _searchFocusNode.dispose();
     _followTimer?.cancel();
     _navigationPosition.dispose();
     _navigationHeading.dispose();
@@ -854,33 +874,351 @@ class _MapViewScreenState extends State<MapViewScreen> {
     }
   }
 
+  String? _categoryFromSearchQuery(String rawQuery) {
+    final q = rawQuery.trim().toLowerCase();
+    if (q.isEmpty) return null;
+    if (const {
+      'college',
+      'colleges',
+      'academic',
+      'academic building',
+    }.contains(q)) {
+      return 'College';
+    }
+    if (const {
+      'campus service',
+      'campus services',
+      'service',
+      'services',
+    }.contains(q)) {
+      return 'Campus services';
+    }
+    if (const {
+      'food',
+      'foods',
+      'canteen',
+      'cafeteria',
+      'dining',
+      'eatery',
+      'snack',
+    }.contains(q)) {
+      return 'Food';
+    }
+    if (const {
+      'parking',
+      'parkings',
+      'park',
+      'parking area',
+      'car park',
+    }.contains(q)) {
+      return 'Parking';
+    }
+    if (const {
+      'facility',
+      'facilities',
+    }.contains(q)) {
+      return 'Facility';
+    }
+    if (const {
+      'room',
+      'rooms',
+      'classroom',
+      'classrooms',
+    }.contains(q)) {
+      return 'Room';
+    }
+    if (const {
+      'office',
+      'offices',
+    }.contains(q)) {
+      return 'Office';
+    }
+    if (const {
+      'laboratory',
+      'laboratories',
+      'lab',
+      'labs',
+    }.contains(q)) {
+      return 'Laboratory';
+    }
+    if (const {
+      'restroom',
+      'restrooms',
+      'cr',
+      'crs',
+      'comfort room',
+      'comfort rooms',
+      'toilet',
+      'toilets',
+      'washroom',
+    }.contains(q)) {
+      return 'Restroom';
+    }
+    return null;
+  }
+
+  BuildingMarkerStyle _markerStyleForCurrentFilter(CampusBuilding building) {
+    final activeCategory = _selectedCategoryFilter != 'All'
+        ? _selectedCategoryFilter
+        : _categoryFromSearchQuery(_searchController.text);
+
+    switch (activeCategory) {
+      case 'College':
+      case 'Colleges':
+        return const BuildingMarkerStyle(
+          icon: Icons.school,
+          color: Color(0xFF0F751B),
+        );
+      case 'Campus services':
+        return const BuildingMarkerStyle(
+          icon: Icons.support_agent,
+          color: Color(0xFFEA580C),
+        );
+      case 'Food':
+        return const BuildingMarkerStyle(
+          icon: Icons.restaurant,
+          color: Color(0xFFD97706),
+        );
+      case 'Parking':
+      case 'Parkings':
+        return const BuildingMarkerStyle(
+          icon: Icons.local_parking,
+          color: Color(0xFF2563EB),
+        );
+      case 'Facility':
+        return const BuildingMarkerStyle(
+          icon: Icons.domain,
+          color: Color(0xFF0F751B),
+        );
+      case 'Room':
+        return const BuildingMarkerStyle(
+          icon: Icons.meeting_room,
+          color: Color(0xFF0F751B),
+        );
+      case 'Office':
+        return const BuildingMarkerStyle(
+          icon: Icons.business_center,
+          color: Color(0xFF0F751B),
+        );
+      case 'Laboratory':
+        return const BuildingMarkerStyle(
+          icon: Icons.science,
+          color: Color(0xFF0891B2),
+        );
+      case 'Restroom':
+        return const BuildingMarkerStyle(
+          icon: Icons.wc,
+          color: Color(0xFF475569),
+        );
+      default:
+        return buildingMarkerStyle(building);
+    }
+  }
+
+  bool _matchesCategoryFilter(CampusBuilding b, String filter) {
+    if (filter == 'All') return true;
+
+    final name = b.name.toLowerCase();
+    final acronym = b.acronym.toLowerCase();
+    final category = b.category.toLowerCase();
+    final description = b.description.toLowerCase();
+    final combined = '$category $name $acronym $description';
+
+    final isParkingLocation = b.isParking ||
+        category.contains('parking') ||
+        name.contains('parking') ||
+        acronym.contains('parking');
+
+    if (filter == 'Parking' || filter == 'Parkings') {
+      return isParkingLocation ||
+          b.rooms.any((r) =>
+              r.category == RoomCategory.parking ||
+              r.title.toLowerCase().contains('parking'));
+    }
+
+    // Never show parking lots under non-parking category filters
+    if (isParkingLocation) return false;
+
+    switch (filter) {
+      case 'College':
+      case 'Colleges':
+        return category.contains('college') ||
+            category.contains('academic') ||
+            name.contains('college') ||
+            name.contains('school') ||
+            name.contains('institute') ||
+            const {
+              'ccsict',
+              'coe',
+              'cbapa',
+              'ca',
+              'ced',
+              'cas',
+              'ccje',
+              'cf',
+              'con',
+              'svm',
+            }.contains(acronym);
+
+      case 'Campus services':
+        return category.contains('service') ||
+            category.contains('admin') ||
+            combined.contains('campus service') ||
+            combined.contains('administration') ||
+            combined.contains('osas') ||
+            combined.contains('student affairs') ||
+            combined.contains('student service') ||
+            combined.contains('infirmary') ||
+            combined.contains('clinic') ||
+            combined.contains('health') ||
+            combined.contains('library') ||
+            combined.contains('security') ||
+            combined.contains('guard') ||
+            combined.contains('registrar') ||
+            combined.contains('cashier') ||
+            combined.contains('guidance') ||
+            b.rooms.any((r) {
+              final rt = r.title.toLowerCase();
+              return r.category == RoomCategory.administrative ||
+                  rt.contains('service') ||
+                  rt.contains('registrar') ||
+                  rt.contains('cashier') ||
+                  rt.contains('clinic') ||
+                  rt.contains('osas') ||
+                  rt.contains('guidance');
+            });
+
+      case 'Food':
+        return category.contains('food') ||
+            combined.contains('canteen') ||
+            combined.contains('cafeteria') ||
+            combined.contains('food') ||
+            combined.contains('dining') ||
+            combined.contains('eatery') ||
+            b.rooms.any((r) {
+              final rt = r.title.toLowerCase();
+              return rt.contains('canteen') ||
+                  rt.contains('cafeteria') ||
+                  rt.contains('food');
+            });
+
+      case 'Facility':
+        return category.contains('facility') ||
+            category.contains('facilities') ||
+            combined.contains('gym') ||
+            combined.contains('grandstand') ||
+            combined.contains('auditorium') ||
+            combined.contains('oval') ||
+            combined.contains('court') ||
+            combined.contains('dorm') ||
+            combined.contains('hostel') ||
+            combined.contains('chapel') ||
+            combined.contains('church') ||
+            combined.contains('center') ||
+            combined.contains('hall') ||
+            b.rooms.any((r) =>
+                r.category == RoomCategory.facility ||
+                r.category == RoomCategory.studyArea ||
+                r.title.toLowerCase().contains('facility'));
+
+      case 'Room':
+        return category == 'room' ||
+            b.rooms.any((r) =>
+                r.category == RoomCategory.room ||
+                r.category == RoomCategory.classroom ||
+                r.title.toLowerCase().contains('room'));
+
+      case 'Office':
+        return category.contains('office') ||
+            category.contains('admin') ||
+            name.contains('office') ||
+            name.contains('administration') ||
+            b.rooms.any((r) =>
+                r.category == RoomCategory.office ||
+                r.category == RoomCategory.administrative ||
+                r.category == RoomCategory.faculty ||
+                r.title.toLowerCase().contains('office'));
+
+      case 'Laboratory':
+        return category.contains('lab') ||
+            name.contains('lab') ||
+            b.rooms.any((r) =>
+                r.category == RoomCategory.laboratory ||
+                r.title.toLowerCase().contains('lab'));
+
+      case 'Restroom':
+        final hasCrWord = RegExp(r'cr').hasMatch(combined);
+        return category.contains('restroom') ||
+            combined.contains('restroom') ||
+            combined.contains('comfort room') ||
+            combined.contains('toilet') ||
+            combined.contains('washroom') ||
+            hasCrWord ||
+            b.rooms.any((r) {
+              final rt = r.title.toLowerCase();
+              final rd = (r.description ?? '').toLowerCase();
+              return r.category == RoomCategory.restroom ||
+                  rt.contains('restroom') ||
+                  rt.contains('comfort room') ||
+                  rt.contains('toilet') ||
+                  rt.contains('washroom') ||
+                  RegExp(r'cr').hasMatch(rt) ||
+                  RegExp(r'cr').hasMatch(rd);
+            });
+
+      case 'Shaded':
+        return b.hasShadedPath;
+
+      default:
+        return true;
+    }
+  }
+
+  bool _buildingMatchesSearchText(CampusBuilding b, String rawQuery) {
+    final query = rawQuery.toLowerCase().trim();
+    if (query.isEmpty) return true;
+
+    final mappedCategory = _categoryFromSearchQuery(query);
+    if (mappedCategory != null) {
+      return _matchesCategoryFilter(b, mappedCategory);
+    }
+
+    final singular = query.endsWith('ies') && query.length > 4
+        ? '${query.substring(0, query.length - 3)}y'
+        : (query.endsWith('s') && query.length > 3
+            ? query.substring(0, query.length - 1)
+            : query);
+
+    bool matchesToken(String q) {
+      if (b.name.toLowerCase().contains(q) ||
+          b.acronym.toLowerCase().contains(q) ||
+          b.category.toLowerCase().contains(q) ||
+          b.description.toLowerCase().contains(q)) {
+        return true;
+      }
+      return b.rooms.any((r) =>
+          r.title.toLowerCase().contains(q) ||
+          r.category.name.toLowerCase().contains(q) ||
+          (r.description ?? '').toLowerCase().contains(q));
+    }
+
+    return matchesToken(query) ||
+        (singular != query && matchesToken(singular));
+  }
+
   List<CampusBuilding> _getFilteredBuildings() {
     return isuCampusBuildings.where((b) {
       final query = _searchController.text.toLowerCase().trim();
-      final matchesQuery = query.isEmpty ||
-          b.name.toLowerCase().contains(query) ||
-          b.acronym.toLowerCase().contains(query) ||
-          b.category.toLowerCase().contains(query) ||
-          b.rooms.any((r) => r.title.toLowerCase().contains(query));
-
-      if (!matchesQuery) return false;
-
-      if (_selectedCategoryFilter == 'Colleges') {
-        return !b.isParking;
-      } else if (_selectedCategoryFilter == 'Parkings') {
-        return b.isParking;
-      } else if (_selectedCategoryFilter == 'Shaded') {
-        return b.hasShadedPath;
-      }
-
+      if (!_buildingMatchesSearchText(b, query)) return false;
+      if (!_matchesCategoryFilter(b, _selectedCategoryFilter)) return false;
       return true;
     }).toList();
   }
 
-  void _selectBuildingAndShowDetails(CampusBuilding building) {
+  void _selectBuildingAndShowDetails(CampusBuilding building, {CampusRoom? room}) {
     setState(() {
       _selectedBuilding = building;
-      _selectedRoom = null;
+      _selectedRoom = room;
       _walkingRoute = null;
       _historySessionId = null;
       _navigationState = NavigationUiState.buildingDetails;
@@ -888,10 +1226,196 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _mapController.move(building.coordinate, 17.5);
   }
 
+  List<CampusBuilding> _getSuggestedBuildings() {
+    if (isuCampusBuildings.isEmpty) return const [];
+
+    final suggestions = <CampusBuilding>[];
+    final addedIds = <String>{};
+
+    // 1. Add recent destinations from navigation history if available
+    for (final entry in _recentHistory) {
+      final match = isuCampusBuildings
+          .where((b) => b.id == entry.destinationId)
+          .firstOrNull;
+      if (match != null && addedIds.add(match.id)) {
+        suggestions.add(match);
+      }
+    }
+
+    // 2. Add prominent campus buildings by keyword matching
+    const prominentKeywords = [
+      'library',
+      'ccsict',
+      'administration',
+      'admin',
+      'canteen',
+      'gym',
+      'infirmary',
+      'clinic',
+      'engineering',
+      'grandstand',
+    ];
+
+    for (final keyword in prominentKeywords) {
+      for (final building in isuCampusBuildings) {
+        if (addedIds.contains(building.id)) continue;
+        final name = building.name.toLowerCase();
+        final acronym = building.acronym.toLowerCase();
+        if (name.contains(keyword) || acronym.contains(keyword)) {
+          addedIds.add(building.id);
+          suggestions.add(building);
+          break;
+        }
+      }
+      if (suggestions.length >= 8) break;
+    }
+
+    // 3. Fallback: Fill up to 6 buildings if still few
+    for (final building in isuCampusBuildings) {
+      if (suggestions.length >= 6) break;
+      if (addedIds.add(building.id)) {
+        suggestions.add(building);
+      }
+    }
+
+    return suggestions;
+  }
+
+  List<SmartSearchResult> _getSmartSearchResults() {
+    final rawQuery = _searchController.text.trim().toLowerCase();
+    if (rawQuery.isEmpty) return const [];
+
+    final results = <SmartSearchResult>[];
+    final mappedCategory = _categoryFromSearchQuery(rawQuery);
+    final isRestroomQuery = mappedCategory == 'Restroom' ||
+        rawQuery == 'cr' ||
+        rawQuery.contains('restroom') ||
+        rawQuery.contains('comfort room') ||
+        rawQuery.contains('toilet') ||
+        rawQuery.contains('washroom');
+    final isParkingQuery = mappedCategory == 'Parking' ||
+        rawQuery.contains('parking') ||
+        rawQuery == 'park';
+    final isFoodQuery = mappedCategory == 'Food' ||
+        rawQuery == 'canteen' ||
+        rawQuery == 'cafeteria' ||
+        rawQuery == 'food' ||
+        rawQuery == 'snack';
+
+    for (final building in isuCampusBuildings) {
+      final nameLower = building.name.toLowerCase();
+      final acronymLower = building.acronym.toLowerCase();
+      final categoryLower = building.category.toLowerCase();
+      final descLower = building.description.toLowerCase();
+
+      final nameMatches = nameLower.contains(rawQuery) ||
+          (acronymLower.isNotEmpty && acronymLower.contains(rawQuery));
+      final categoryMatches = categoryLower.contains(rawQuery);
+      final descMatches = descLower.contains(rawQuery);
+      final synonymMatches =
+          (mappedCategory != null &&
+              _matchesCategoryFilter(building, mappedCategory)) ||
+          (isRestroomQuery && _matchesCategoryFilter(building, 'Restroom')) ||
+          (isParkingQuery && _matchesCategoryFilter(building, 'Parking')) ||
+          (isFoodQuery && _matchesCategoryFilter(building, 'Food')) ||
+          _buildingMatchesSearchText(building, rawQuery);
+
+      // Check interior rooms matching
+      final matchingRooms = <CampusRoom>[];
+      for (final room in building.rooms) {
+        final titleLower = room.title.toLowerCase();
+        final roomCatLower = room.category.name.toLowerCase();
+        final roomDescLower = (room.description ?? '').toLowerCase();
+
+        final roomMatches = titleLower.contains(rawQuery) ||
+            roomCatLower.contains(rawQuery) ||
+            roomDescLower.contains(rawQuery) ||
+            (isRestroomQuery &&
+                (roomCatLower.contains('restroom') ||
+                    titleLower.contains('cr') ||
+                    titleLower.contains('restroom')));
+
+        if (roomMatches) {
+          matchingRooms.add(room);
+        }
+      }
+
+      if (nameMatches ||
+          categoryMatches ||
+          descMatches ||
+          synonymMatches ||
+          matchingRooms.isNotEmpty) {
+        results.add(SmartSearchResult(
+          building: building,
+          matchedRooms: matchingRooms,
+          isDirectMatch: nameMatches || synonymMatches,
+        ));
+      }
+    }
+
+    // Sort direct name/acronym/synonym matches first
+    results.sort((a, b) {
+      if (a.isDirectMatch && !b.isDirectMatch) return -1;
+      if (!a.isDirectMatch && b.isDirectMatch) return 1;
+      return 0;
+    });
+
+    return results;
+  }
+
+  void _handleSearchSubmitted(String query) {
+    final cleanQuery = query.trim();
+    if (cleanQuery.isEmpty) return;
+    _searchFocusNode.unfocus();
+
+    final mappedCategory = _categoryFromSearchQuery(cleanQuery);
+    final results = _getSmartSearchResults();
+
+    if (mappedCategory != null && results.isNotEmpty) {
+      setState(() {
+        _selectedCategoryFilter = mappedCategory;
+        if (results.length > 1) {
+          _navigationState = NavigationUiState.idle;
+        }
+      });
+      if (results.length == 1) {
+        final best = results.first;
+        _selectBuildingAndShowDetails(best.building,
+            room: best.matchedRooms.firstOrNull);
+        _mapController.move(best.building.coordinate, 18.2);
+      }
+      return;
+    }
+
+    if (results.isNotEmpty) {
+      final best = results.first;
+      _selectBuildingAndShowDetails(best.building,
+          room: best.matchedRooms.firstOrNull);
+      _mapController.move(best.building.coordinate, 18.2);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No location found matching "$cleanQuery"'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: const Color(0xFF0B351E),
+        ),
+      );
+    }
+  }
+
   Widget _buildFilterChip(String label, IconData icon) {
     final isSelected = _selectedCategoryFilter == label;
     return GestureDetector(
-      onTap: () => setState(() => _selectedCategoryFilter = label),
+      onTap: () {
+        _searchFocusNode.unfocus();
+        setState(() {
+          if (_selectedCategoryFilter == label && label != 'All') {
+            _selectedCategoryFilter = 'All';
+          } else {
+            _selectedCategoryFilter = label;
+          }
+        });
+      },
       child: Container(
         margin: const EdgeInsets.only(right: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -925,6 +1449,387 @@ class _MapViewScreenState extends State<MapViewScreen> {
     );
   }
 
+  Widget _buildSmartSearchPanel(double topPadding) {
+    final query = _searchController.text.trim();
+    final isQueryEmpty = query.isEmpty;
+    final smartResults = _getSmartSearchResults();
+    final suggestedBuildings = _getSuggestedBuildings();
+
+    return Positioned(
+      top: topPadding + 155,
+      left: 16,
+      right: 16,
+      child: Material(
+        elevation: 8,
+        borderRadius: BorderRadius.circular(18),
+        color: Colors.white,
+        shadowColor: Colors.black26,
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.44,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: isQueryEmpty
+                ? _buildSuggestedForYouContent(suggestedBuildings)
+                : _buildSmartResultsContent(query, smartResults),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuggestedForYouContent(List<CampusBuilding> suggestedBuildings) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Suggested header with icon
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F751B).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.auto_awesome,
+                  size: 15,
+                  color: Color(0xFF0F751B),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'SUGGESTED FOR YOU',
+                style: GoogleFonts.montserrat(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF0B351E),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'Campus Highlights',
+                style: GoogleFonts.montserrat(
+                  fontSize: 10.5,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        if (suggestedBuildings.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+            child: Center(
+              child: Text(
+                'Explore ISU Echague campus buildings by searching or selecting a category.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.montserrat(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+          )
+        else
+          Flexible(
+            child: ListView.separated(
+              padding: const EdgeInsets.only(bottom: 8, top: 4),
+              shrinkWrap: true,
+              itemCount: suggestedBuildings.length,
+              separatorBuilder: (_, __) => Divider(
+                height: 1,
+                indent: 16,
+                endIndent: 16,
+                color: Colors.grey.shade100,
+              ),
+              itemBuilder: (context, idx) {
+                final bldg = suggestedBuildings[idx];
+                final style = buildingMarkerStyle(bldg);
+                final isRecent =
+                    _recentHistory.any((h) => h.destinationId == bldg.id);
+                return ListTile(
+                  dense: true,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                  leading: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: style.color.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(style.icon, color: style.color, size: 18),
+                  ),
+                  title: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          bldg.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.montserrat(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                      if (isRecent)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.history,
+                                  size: 11, color: Colors.grey.shade700),
+                              const SizedBox(width: 3),
+                              Text(
+                                'Recent',
+                                style: GoogleFonts.montserrat(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                  subtitle: Text(
+                    bldg.acronym.isNotEmpty
+                        ? '${bldg.acronym} • ${bldg.category}${bldg.rooms.isNotEmpty ? ' • ${bldg.rooms.length} Rooms' : ''}'
+                        : '${bldg.category}${bldg.rooms.isNotEmpty ? ' • ${bldg.rooms.length} Rooms' : ''}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.montserrat(
+                      fontSize: 11,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  trailing: Icon(
+                    Icons.north_west,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
+                  onTap: () {
+                    _searchController.clear();
+                    _searchFocusNode.unfocus();
+                    _selectBuildingAndShowDetails(bldg);
+                  },
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSmartResultsContent(
+      String query, List<SmartSearchResult> smartResults) {
+    if (smartResults.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off, size: 36, color: Colors.grey.shade400),
+            const SizedBox(height: 8),
+            Text(
+              'No matches found for "$query"',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.montserrat(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Try typing "CCSICT", "Library", "Canteen", "Parking", or "CR".',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.montserrat(
+                fontSize: 11,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Text(
+            'SEARCH RESULTS (${smartResults.length})',
+            style: GoogleFonts.montserrat(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: Colors.grey.shade600,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        Flexible(
+          child: ListView.separated(
+            padding: const EdgeInsets.only(bottom: 8),
+            shrinkWrap: true,
+            itemCount: smartResults.length,
+            separatorBuilder: (_, __) => Divider(
+              height: 1,
+              indent: 16,
+              endIndent: 16,
+              color: Colors.grey.shade100,
+            ),
+            itemBuilder: (context, idx) {
+              final result = smartResults[idx];
+              final bldg = result.building;
+              final style = buildingMarkerStyle(bldg);
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    dense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                    leading: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: style.color.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(style.icon, color: style.color, size: 18),
+                    ),
+                    title: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            bldg.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.montserrat(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                        if (bldg.rooms.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F751B).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '${bldg.rooms.length} Rooms',
+                              style: GoogleFonts.montserrat(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF0F751B),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    subtitle: Text(
+                      bldg.acronym.isNotEmpty
+                          ? '${bldg.acronym} • ${bldg.category}'
+                          : bldg.category,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.montserrat(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    onTap: () {
+                      _searchController.clear();
+                      _searchFocusNode.unfocus();
+                      _selectBuildingAndShowDetails(bldg);
+                    },
+                  ),
+                  if (result.matchedRooms.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(48, 0, 14, 8),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: result.matchedRooms.take(3).map((room) {
+                          return InkWell(
+                            onTap: () {
+                              _searchController.clear();
+                              _searchFocusNode.unfocus();
+                              _selectBuildingAndShowDetails(bldg, room: room);
+                            },
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEAF5EC),
+                                borderRadius: BorderRadius.circular(6),
+                                border:
+                                    Border.all(color: const Color(0xFFC3DFC8)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.meeting_room,
+                                    size: 11,
+                                    color: Color(0xFF0F751B),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${room.title} (${room.floor})',
+                                    style: GoogleFonts.montserrat(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFF0F5A28),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
@@ -950,6 +1855,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   bounds: isuEchagueBounds,
                 ),
                 onTap: (_, __) {
+                  _searchFocusNode.unfocus();
                   if (_navigationState == NavigationUiState.buildingDetails) {
                     setState(() {
                       _navigationState = NavigationUiState.idle;
@@ -1024,7 +1930,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   builder: (context, zoom, _) => MarkerLayer(
                     markers: filteredBuildings.map((building) {
                       final isSelected = _selectedBuilding?.id == building.id;
-                      final markerStyle = buildingMarkerStyle(building);
+                      final markerStyle = _markerStyleForCurrentFilter(building);
                       final opacity =
                           buildingIconOpacity(zoom, isSelected: isSelected);
                       return Marker(
@@ -1571,6 +2477,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
                           Expanded(
                             child: TextField(
                               controller: _searchController,
+                              focusNode: _searchFocusNode,
+                              textInputAction: TextInputAction.search,
+                              onSubmitted: _handleSearchSubmitted,
                               onChanged: (val) => setState(() {}),
                               style: GoogleFonts.montserrat(
                                 color: Colors.white,
@@ -1589,10 +2498,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                               ),
                             ),
                           ),
-                          if (_searchController.text.isNotEmpty)
+                          if (_searchController.text.isNotEmpty ||
+                              _searchFocusNode.hasFocus)
                             GestureDetector(
                               onTap: () {
                                 _searchController.clear();
+                                _searchFocusNode.unfocus();
                                 setState(() {});
                               },
                               child: const Icon(
@@ -1614,9 +2525,16 @@ class _MapViewScreenState extends State<MapViewScreen> {
                       child: Row(
                         children: [
                           _buildFilterChip('All', Icons.grid_view),
-                          _buildFilterChip('Colleges', Icons.school),
-                          _buildFilterChip('Parkings', Icons.local_parking),
-                          _buildFilterChip('Shaded', Icons.park_outlined),
+                          _buildFilterChip('College', Icons.school),
+                          _buildFilterChip(
+                              'Campus services', Icons.support_agent),
+                          _buildFilterChip('Food', Icons.restaurant),
+                          _buildFilterChip('Parking', Icons.local_parking),
+                          _buildFilterChip('Facility', Icons.domain),
+                          _buildFilterChip('Room', Icons.meeting_room),
+                          _buildFilterChip('Office', Icons.business_center),
+                          _buildFilterChip('Laboratory', Icons.science),
+                          _buildFilterChip('Restroom', Icons.wc),
                         ],
                       ),
                     ),
@@ -1625,131 +2543,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
               ),
             ),
 
-          // Floating Search Suggestions Dropdown (appears when user is typing)
-          if (!_isNavigationActive && _searchController.text.trim().isNotEmpty)
-            Positioned(
-              top: topPadding + 155,
-              left: 20,
-              right: 20,
-              child: Material(
-                elevation: 6,
-                borderRadius: BorderRadius.circular(16),
-                color: Colors.white,
-                child: Container(
-                  constraints: const BoxConstraints(maxHeight: 220),
-                  child: filteredBuildings.isEmpty
-                      ? Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Text(
-                            'No building found matching "${_searchController.text}"',
-                            style: GoogleFonts.montserrat(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          shrinkWrap: true,
-                          itemCount: filteredBuildings.length,
-                          separatorBuilder: (_, __) => const Divider(
-                            height: 1,
-                            indent: 16,
-                            endIndent: 16,
-                          ),
-                          itemBuilder: (context, idx) {
-                            final bldg = filteredBuildings[idx];
-                            return ListTile(
-                              dense: true,
-                              leading: Icon(
-                                bldg.isParking
-                                    ? Icons.local_parking
-                                    : Icons.school,
-                                color: const Color(0xFF0F751B),
-                                size: 20,
-                              ),
-                              title: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      bldg.name,
-                                      style: GoogleFonts.montserrat(
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black87,
-                                      ),
-                                    ),
-                                  ),
-                                  if (bldg.rooms.isNotEmpty)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF0F751B)
-                                            .withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        '${bldg.rooms.length} Rooms',
-                                        style: GoogleFonts.montserrat(
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.bold,
-                                          color: const Color(0xFF0F751B),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              subtitle: Builder(
-                                builder: (context) {
-                                  final query = _searchController.text
-                                      .toLowerCase()
-                                      .trim();
-                                  final matchedRooms = bldg.rooms
-                                      .where((r) =>
-                                          r.title.toLowerCase().contains(query))
-                                      .toList();
-
-                                  if (query.isNotEmpty &&
-                                      matchedRooms.isNotEmpty) {
-                                    final roomNames = matchedRooms
-                                        .map((r) => r.title)
-                                        .take(2)
-                                        .join(', ');
-                                    return Text(
-                                      'Inside: $roomNames (${matchedRooms.first.floor})',
-                                      style: GoogleFonts.montserrat(
-                                        fontSize: 11,
-                                        color: const Color(0xFF0F751B),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    );
-                                  }
-
-                                  return Text(
-                                    bldg.acronym.isNotEmpty
-                                        ? '${bldg.acronym} • ${bldg.category}'
-                                        : bldg.category,
-                                    style: GoogleFonts.montserrat(
-                                      fontSize: 11,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  );
-                                },
-                              ),
-                              onTap: () {
-                                _searchController.clear();
-                                FocusScope.of(context).unfocus();
-                                _selectBuildingAndShowDetails(bldg);
-                              },
-                            );
-                          },
-                        ),
-                ),
-              ),
-            ),
+          // Smart Search & "Suggested for you" Floating Panel
+          if (!_isNavigationActive && _searchFocusNode.hasFocus)
+            _buildSmartSearchPanel(topPadding),
 
           // 3. Bottom Sheet Overlay State Machine
           if (_locationStatus != null &&
@@ -1994,4 +2790,16 @@ class _MapViewScreenState extends State<MapViewScreen> {
       ),
     );
   }
+}
+
+class SmartSearchResult {
+  final CampusBuilding building;
+  final List<CampusRoom> matchedRooms;
+  final bool isDirectMatch;
+
+  const SmartSearchResult({
+    required this.building,
+    this.matchedRooms = const [],
+    this.isDirectMatch = false,
+  });
 }
