@@ -162,6 +162,25 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   List<LatLng> get _routePoints => _walkingRoute?.points ?? const [];
 
+  /// The destination stands out from the other buildings while a route to it
+  /// is on the map.
+  bool _highlightsDestination(CampusBuilding building) =>
+      (_isNavigationActive ||
+          _navigationState == NavigationUiState.routeDetails) &&
+      building.id == _selectedBuilding?.id;
+
+  /// Search and category filters never hide the destination of the route on
+  /// the map.
+  List<CampusBuilding> _withRouteDestination(List<CampusBuilding> buildings) {
+    final destination = _selectedBuilding;
+    if (destination == null ||
+        !_highlightsDestination(destination) ||
+        buildings.any((building) => building.id == destination.id)) {
+      return buildings;
+    }
+    return [...buildings, destination];
+  }
+
   bool get _showsTransportOriginMarker =>
       _navigationState == NavigationUiState.chooseRoute ||
       _navigationState == NavigationUiState.routeDetails ||
@@ -959,6 +978,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
     final filteredBuildings = _getFilteredBuildings();
+    final mapBuildings = _withRouteDestination(filteredBuildings);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F5),
@@ -1012,15 +1032,28 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
                 PolygonLayer(
                   polygons: [
-                    ...filteredBuildings
+                    ...mapBuildings
                         .where((building) =>
-                            building.polygonCoordinates.length >= 3)
+                            building.polygonCoordinates.length >= 3 &&
+                            !_highlightsDestination(building))
                         .map((building) => Polygon(
                               points: building.polygonCoordinates,
                               color: const Color(0xFF0F751B)
                                   .withValues(alpha: 0.18),
                               borderColor: const Color(0xFF0F751B),
                               borderStrokeWidth: 1.5,
+                            )),
+                    // Drawn last so the destination sits above its neighbours.
+                    ...mapBuildings
+                        .where((building) =>
+                            building.polygonCoordinates.length >= 3 &&
+                            _highlightsDestination(building))
+                        .map((building) => Polygon(
+                              points: building.polygonCoordinates,
+                              color: const Color(0xFFECC700)
+                                  .withValues(alpha: 0.32),
+                              borderColor: const Color(0xFFECC700),
+                              borderStrokeWidth: 3,
                             )),
                     Polygon(
                       points: isuEchagueMockBoundary,
@@ -1049,10 +1082,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   ),
 
                 // Building names fade first; icons fade at the farthest zoom.
+                // Icons and names stay upright however the map is rotated.
                 ValueListenableBuilder<double>(
                   valueListenable: _mapZoom,
                   builder: (context, zoom, _) => MarkerLayer(
-                    markers: filteredBuildings.map((building) {
+                    rotate: true,
+                    markers: mapBuildings.map((building) {
                       final isSelected = _selectedBuilding?.id == building.id;
                       final markerStyle = buildingMarkerStyle(building);
                       final opacity =
@@ -1124,11 +1159,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 ),
 
                 // Labels appear progressively as the user zooms in. They never
-                // take taps away from the icon markers underneath.
+                // take taps away from the icon markers underneath. Both turn
+                // around the building's point, so the name stays below the
+                // icon on screen.
                 ValueListenableBuilder<double>(
                   valueListenable: _mapZoom,
                   builder: (context, zoom, _) => MarkerLayer(
-                    markers: filteredBuildings.map((building) {
+                    rotate: true,
+                    markers: mapBuildings.map((building) {
                       return Marker(
                         point: building.coordinate,
                         width: 120,
@@ -1239,6 +1277,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     markers: [
                       Marker(
                         point: _routeEtaLabelPoint!,
+                        rotate: true,
                         width: 76,
                         // Space for both the ETA pill and its map pointer.
                         // A 48px marker clipped this Column by about 3px.
