@@ -71,6 +71,13 @@ class MapViewScreen extends StatefulWidget {
 class _MapViewScreenState extends State<MapViewScreen> {
   DateTime get _navigationNow =>
       widget.navigationClock?.call() ?? DateTime.now();
+
+  /// Whether the last GPS fix is recent enough to navigate or start from.
+  bool get _hasFreshFix =>
+      _lastPositionAt != null &&
+      _navigationNow.difference(_lastPositionAt!) <=
+          const Duration(seconds: 20);
+
   static const NavigationOrigin _defaultOrigin = NavigationOrigin(
     id: 'main_gate',
     label: 'ISU Main Gate',
@@ -375,6 +382,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         if (!mounted) return;
         _positionSubscription?.cancel();
         _positionSubscription = null;
+        // The last fix is no longer current, so it can't start directions.
+        _lastPositionAt = null;
         setState(() {
           _locationStatus =
               'GPS is unavailable. Check Location Services and permissions.';
@@ -448,6 +457,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
           type: NavigationOriginType.currentLocation,
         );
         _hasSelectedOrigin = isuEchagueBounds.contains(_currentUserLocation!);
+      } else if (!_hasSelectedOrigin &&
+          _navigationState == NavigationUiState.chooseRoute &&
+          isuEchagueBounds.contains(_currentUserLocation!)) {
+        // A fix that arrives before any starting point is chosen becomes
+        // the default. A starting point the user picked is never replaced.
+        _applyDefaultOrigin();
       }
     });
 
@@ -571,6 +586,29 @@ class _MapViewScreenState extends State<MapViewScreen> {
     });
   }
 
+  /// Starts new directions from the user's position when a fresh fix is
+  /// known inside campus. Otherwise no starting point is chosen yet.
+  void _applyDefaultOrigin() {
+    final location = _currentUserLocation;
+    final insideCampus =
+        location != null && _hasFreshFix && isuEchagueBounds.contains(location);
+    _selectedOrigin = insideCampus
+        ? NavigationOrigin(
+            id: 'current_location',
+            label: 'My Current Location',
+            coordinate: location,
+            type: NavigationOriginType.currentLocation,
+          )
+        : _defaultOrigin;
+    _hasSelectedOrigin = insideCampus;
+  }
+
+  /// Asks for a fix in the background when directions open without one, so
+  /// the user's position can still become the starting point.
+  void _locateForDefaultOrigin() {
+    if (!_hasSelectedOrigin) _initializeCurrentLocation();
+  }
+
   Future<void> _useCurrentLocationAsOrigin() async {
     if (_currentUserLocation == null ||
         !isuEchagueBounds.contains(_currentUserLocation!)) {
@@ -654,9 +692,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     await _initializeCurrentLocation();
     if (!mounted || _navigationState != NavigationUiState.routeDetails) return;
     if (_currentUserLocation == null ||
-        _lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20) ||
+        !_hasFreshFix ||
         !isuEchagueBounds.contains(_currentUserLocation!)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
@@ -677,9 +713,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _gpsWatchdog?.cancel();
     _gpsWatchdog = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted || _navigationState != NavigationUiState.navigating) return;
-      if (_lastPositionAt == null ||
-          _navigationNow.difference(_lastPositionAt!) >
-              const Duration(seconds: 20)) {
+      if (!_hasFreshFix) {
         _arrivalFixes = 0;
         _offRouteFixes = 0;
         setState(() =>
@@ -700,9 +734,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (_navigationState != NavigationUiState.navigating ||
         route == null ||
         location == null) return;
-    if (_lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20)) {
+    if (!_hasFreshFix) {
       setState(() =>
           _navigationStatus = 'GPS signal lost. Waiting for your location…');
       _arrivalFixes = 0;
@@ -745,9 +777,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (!_gpsAccuracy.isFinite ||
         _gpsAccuracy > 25 ||
         _gpsAccuracy < 0 ||
-        _lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20)) {
+        !_hasFreshFix) {
       _refreshNavigationProgress();
       return;
     }
@@ -1500,12 +1530,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                               .where(
                                                   (r) => r.id == entry.roomId)
                                               .firstOrNull;
-                                          _hasSelectedOrigin = false;
-                                          _selectedOrigin = _defaultOrigin;
+                                          _applyDefaultOrigin();
                                           _walkingRoute = null;
                                           _navigationState =
                                               NavigationUiState.chooseRoute;
                                         });
+                                        _locateForDefaultOrigin();
                                       },
                                     ),
                                   ),
@@ -1807,21 +1837,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   setState(() {
                     _historySessionId = null;
                     _selectedRoom = null;
-                    _hasSelectedOrigin = false;
-                    _selectedOrigin = _defaultOrigin;
+                    _applyDefaultOrigin();
                     _walkingRoute = null;
                     _navigationState = NavigationUiState.chooseRoute;
                   });
+                  _locateForDefaultOrigin();
                 },
                 onRoomDirectionsTap: (room) {
                   setState(() {
                     _historySessionId = null;
                     _selectedRoom = room;
                     _walkingRoute = null;
-                    _hasSelectedOrigin = false;
-                    _selectedOrigin = _defaultOrigin;
+                    _applyDefaultOrigin();
                     _navigationState = NavigationUiState.chooseRoute;
                   });
+                  _locateForDefaultOrigin();
                 },
               ),
             ),
