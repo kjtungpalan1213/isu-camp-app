@@ -13,9 +13,11 @@ router = APIRouter(prefix='/auth/captcha', tags=['Authentication'])
 
 def validate_parent_origin(parent_origin: str):
     if parent_origin:
-        origins = {item.strip() for item in os.getenv('RECAPTCHA_PARENT_ORIGINS', '').split(',')}
+        origins = {item.strip() for item in os.getenv('RECAPTCHA_PARENT_ORIGINS', '').split(',') if item.strip()}
         parsed = urlsplit(parent_origin)
-        if parent_origin not in origins or parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        base_origin = f'{parsed.scheme}://{parsed.hostname}' if parsed.scheme and parsed.hostname else ''
+        allows_local_port = parsed.hostname in ('localhost', '127.0.0.1') and base_origin in origins
+        if (parent_origin not in origins and not allows_local_port) or parsed.scheme not in ('http', 'https') or not parsed.netloc:
             raise HTTPException(403, detail={
                 'code': 'captcha_origin_not_allowed',
                 'message': 'Human verification is not enabled for this app address. Please contact support.',
