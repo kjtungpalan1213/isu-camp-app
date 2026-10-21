@@ -20,6 +20,7 @@ import '../models/navigation_history.dart';
 import '../models/navigation_camera.dart';
 import '../models/navigation_heading.dart';
 import '../models/navigation_progress.dart';
+import '../models/route_trim.dart';
 import '../services/campus_service.dart';
 import '../services/navigation_history_service.dart';
 import '../widgets/location_puck.dart';
@@ -121,6 +122,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
   final ValueNotifier<double?> _navigationHeading = ValueNotifier(null);
   Timer? _followTimer;
   final ValueNotifier<LatLng?> _navigationPosition = ValueNotifier(null);
+  RouteTrim? _routeTrim;
+  final TravelOdometer _odometer = TravelOdometer();
+  // The odometer when the latest reroute was requested from the user.
+  double? _rerouteTravelled;
   int _previewStepIndex = 0;
   String? _historySessionId;
   Future<void> _historyWriteQueue = Future<void>.value();
@@ -163,6 +168,31 @@ class _MapViewScreenState extends State<MapViewScreen> {
       ];
 
   List<LatLng> get _routePoints => _walkingRoute?.points ?? const [];
+
+  /// The latest fix is accurate and fresh enough to guide by.
+  bool get _hasUsableFix =>
+      _gpsAccuracy.isFinite &&
+      _gpsAccuracy <= 25 &&
+      _gpsAccuracy >= 0 &&
+      _hasFreshFix;
+
+  /// While navigating, only the route still ahead of the user is drawn. A
+  /// reroute brings a new point list, which starts a new trim. Positions from
+  /// a fix guidance would ignore don't move the line.
+  List<LatLng> _visibleRoutePoints(LatLng? position) {
+    final points = _routePoints;
+    if (_navigationState != NavigationUiState.navigating || position == null) {
+      return points;
+    }
+    final travelled = _odometer.metersAt(_navigationNow);
+    if (!identical(_routeTrim?.points, points)) {
+      // A reroute starts where the user was when it was requested, which can
+      // be well behind them by the time it arrives.
+      _routeTrim = RouteTrim(points, _rerouteTravelled ?? travelled);
+    }
+    return _routeTrim!
+        .ahead(position, travelled: travelled, advance: _hasUsableFix);
+  }
 
   /// The destination stands out from the other buildings while a route to it
   /// is on the map.
@@ -505,6 +535,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
       }
     });
 
+    // Only trusted fixes count as movement.
+    _odometer.record(_navigationNow, _hasUsableFix ? _fixSpeed : 0);
     _startCompass();
     _refreshNavigationProgress(countFix: true);
 
@@ -687,6 +719,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       _routeError = null;
       _isRerouting = false;
       _lastRerouteAt = null;
+      _rerouteTravelled = null;
       _offRouteFixes = 0;
       _arrivalFixes = 0;
     });
@@ -748,6 +781,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       _arrivalFixes = 0;
       _offRouteFixes = 0;
       _lastRerouteAt = null;
+      _rerouteTravelled = null;
     });
     _gpsWatchdog?.cancel();
     _gpsWatchdog = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -813,10 +847,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         location == null ||
         destination == null ||
         _navigationState != NavigationUiState.navigating) return;
-    if (!_gpsAccuracy.isFinite ||
-        _gpsAccuracy > 25 ||
-        _gpsAccuracy < 0 ||
-        !_hasFreshFix) {
+    if (!_hasUsableFix) {
       _refreshNavigationProgress();
       return;
     }
@@ -826,6 +857,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
             const Duration(seconds: 15)) return;
     final generation = _navigationGeneration;
     _lastRerouteAt = _navigationNow;
+    _rerouteTravelled = _odometer.metersAt(_navigationNow);
     setState(() {
       _isRerouting = true;
       _routeError = null;
@@ -1975,16 +2007,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     (_navigationState == NavigationUiState.routeDetails ||
                         _navigationState == NavigationUiState.routePreview ||
                         _navigationState == NavigationUiState.navigating))
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: _routePoints,
-                        strokeWidth: 5.0,
-                        color: navigationRouteBlue,
-                        borderColor: Colors.white,
-                        borderStrokeWidth: 2.0,
-                      ),
-                    ],
+                  // Follows the smoothed position, so the line shrinks with
+                  // the arrow between GPS fixes.
+                  ValueListenableBuilder<LatLng?>(
+                    valueListenable: _navigationPosition,
+                    builder: (context, position, _) => PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: _visibleRoutePoints(position),
+                          strokeWidth: 5.0,
+                          color: navigationRouteBlue,
+                          borderColor: Colors.white,
+                          borderStrokeWidth: 2.0,
+                        ),
+                      ],
+                    ),
                   ),
 
                 // Building names fade first; icons fade at the farthest zoom.
