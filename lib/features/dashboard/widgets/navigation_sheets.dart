@@ -1058,11 +1058,13 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
   @override
   void didUpdateWidget(covariant ChooseRouteSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.hasSelectedOrigin != oldWidget.hasSelectedOrigin ||
-        widget.origin.id != oldWidget.origin.id) {
+    // An origin chosen while the user types a search (a GPS fix arriving)
+    // keeps their query and picker; _restoreOriginField syncs the field.
+    if (!_isEditingOrigin &&
+        (widget.hasSelectedOrigin != oldWidget.hasSelectedOrigin ||
+            widget.origin.id != oldWidget.origin.id)) {
       _originSearchController.text =
           widget.hasSelectedOrigin ? widget.origin.label : '';
-      _isEditingOrigin = false;
     }
     final currentLocationMoved = widget.hasSelectedOrigin &&
         widget.origin.type == NavigationOriginType.currentLocation &&
@@ -1075,7 +1077,7 @@ class _ChooseRouteSheetState extends State<ChooseRouteSheet> {
         widget.origin.id != oldWidget.origin.id ||
         currentLocationMoved ||
         widget.destination.id != oldWidget.destination.id) {
-      if (widget.hasSelectedOrigin) {
+      if (widget.hasSelectedOrigin && !_isEditingOrigin) {
         _showOriginPicker = false;
         _showBuildings = false;
       }

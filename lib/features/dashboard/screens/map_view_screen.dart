@@ -72,6 +72,13 @@ class MapViewScreen extends StatefulWidget {
 class _MapViewScreenState extends State<MapViewScreen> {
   DateTime get _navigationNow =>
       widget.navigationClock?.call() ?? DateTime.now();
+
+  /// Whether the last GPS fix is recent enough to navigate or start from.
+  bool get _hasFreshFix =>
+      _lastPositionAt != null &&
+      _navigationNow.difference(_lastPositionAt!) <=
+          const Duration(seconds: 20);
+
   static const NavigationOrigin _defaultOrigin = NavigationOrigin(
     id: 'main_gate',
     label: 'ISU Main Gate',
@@ -165,9 +172,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
       _gpsAccuracy.isFinite &&
       _gpsAccuracy <= 25 &&
       _gpsAccuracy >= 0 &&
-      _lastPositionAt != null &&
-      _navigationNow.difference(_lastPositionAt!) <=
-          const Duration(seconds: 20);
+      _hasFreshFix;
 
   /// While navigating, only the route still ahead of the user is drawn. A
   /// reroute brings a new point list, which starts a new trim. Positions from
@@ -185,6 +190,25 @@ class _MapViewScreenState extends State<MapViewScreen> {
     }
     return _routeTrim!
         .ahead(position, travelled: travelled, advance: _hasUsableFix);
+  }
+
+  /// The destination stands out from the other buildings while a route to it
+  /// is on the map.
+  bool _highlightsDestination(CampusBuilding building) =>
+      (_isNavigationActive ||
+          _navigationState == NavigationUiState.routeDetails) &&
+      building.id == _selectedBuilding?.id;
+
+  /// Search and category filters never hide the destination of the route on
+  /// the map.
+  List<CampusBuilding> _withRouteDestination(List<CampusBuilding> buildings) {
+    final destination = _selectedBuilding;
+    if (destination == null ||
+        !_highlightsDestination(destination) ||
+        buildings.any((building) => building.id == destination.id)) {
+      return buildings;
+    }
+    return [...buildings, destination];
   }
 
   bool get _showsTransportOriginMarker =>
@@ -407,6 +431,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         if (!mounted) return;
         _positionSubscription?.cancel();
         _positionSubscription = null;
+        // The last fix is no longer current, so it can't start directions.
+        _lastPositionAt = null;
         setState(() {
           _locationStatus =
               'GPS is unavailable. Check Location Services and permissions.';
@@ -480,6 +506,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
           type: NavigationOriginType.currentLocation,
         );
         _hasSelectedOrigin = isuEchagueBounds.contains(_currentUserLocation!);
+      } else if (!_hasSelectedOrigin &&
+          _navigationState == NavigationUiState.chooseRoute &&
+          isuEchagueBounds.contains(_currentUserLocation!)) {
+        // A fix that arrives before any starting point is chosen becomes
+        // the default. A starting point the user picked is never replaced.
+        _applyDefaultOrigin();
       }
     });
 
@@ -605,6 +637,29 @@ class _MapViewScreenState extends State<MapViewScreen> {
     });
   }
 
+  /// Starts new directions from the user's position when a fresh fix is
+  /// known inside campus. Otherwise no starting point is chosen yet.
+  void _applyDefaultOrigin() {
+    final location = _currentUserLocation;
+    final insideCampus =
+        location != null && _hasFreshFix && isuEchagueBounds.contains(location);
+    _selectedOrigin = insideCampus
+        ? NavigationOrigin(
+            id: 'current_location',
+            label: 'My Current Location',
+            coordinate: location,
+            type: NavigationOriginType.currentLocation,
+          )
+        : _defaultOrigin;
+    _hasSelectedOrigin = insideCampus;
+  }
+
+  /// Asks for a fix in the background when directions open without one, so
+  /// the user's position can still become the starting point.
+  void _locateForDefaultOrigin() {
+    if (!_hasSelectedOrigin) _initializeCurrentLocation();
+  }
+
   Future<void> _useCurrentLocationAsOrigin() async {
     if (_currentUserLocation == null ||
         !isuEchagueBounds.contains(_currentUserLocation!)) {
@@ -689,9 +744,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     await _initializeCurrentLocation();
     if (!mounted || _navigationState != NavigationUiState.routeDetails) return;
     if (_currentUserLocation == null ||
-        _lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20) ||
+        !_hasFreshFix ||
         !isuEchagueBounds.contains(_currentUserLocation!)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
@@ -713,9 +766,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _gpsWatchdog?.cancel();
     _gpsWatchdog = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted || _navigationState != NavigationUiState.navigating) return;
-      if (_lastPositionAt == null ||
-          _navigationNow.difference(_lastPositionAt!) >
-              const Duration(seconds: 20)) {
+      if (!_hasFreshFix) {
         _arrivalFixes = 0;
         _offRouteFixes = 0;
         setState(() =>
@@ -736,9 +787,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (_navigationState != NavigationUiState.navigating ||
         route == null ||
         location == null) return;
-    if (_lastPositionAt == null ||
-        _navigationNow.difference(_lastPositionAt!) >
-            const Duration(seconds: 20)) {
+    if (!_hasFreshFix) {
       setState(() =>
           _navigationStatus = 'GPS signal lost. Waiting for your location…');
       _arrivalFixes = 0;
@@ -961,6 +1010,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
     final filteredBuildings = _getFilteredBuildings();
+    final mapBuildings = _withRouteDestination(filteredBuildings);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F5),
@@ -1014,15 +1064,28 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
                 PolygonLayer(
                   polygons: [
-                    ...filteredBuildings
+                    ...mapBuildings
                         .where((building) =>
-                            building.polygonCoordinates.length >= 3)
+                            building.polygonCoordinates.length >= 3 &&
+                            !_highlightsDestination(building))
                         .map((building) => Polygon(
                               points: building.polygonCoordinates,
                               color: const Color(0xFF0F751B)
                                   .withValues(alpha: 0.18),
                               borderColor: const Color(0xFF0F751B),
                               borderStrokeWidth: 1.5,
+                            )),
+                    // Drawn last so the destination sits above its neighbours.
+                    ...mapBuildings
+                        .where((building) =>
+                            building.polygonCoordinates.length >= 3 &&
+                            _highlightsDestination(building))
+                        .map((building) => Polygon(
+                              points: building.polygonCoordinates,
+                              color: const Color(0xFFECC700)
+                                  .withValues(alpha: 0.32),
+                              borderColor: const Color(0xFFECC700),
+                              borderStrokeWidth: 3,
                             )),
                     Polygon(
                       points: isuEchagueMockBoundary,
@@ -1056,10 +1119,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   ),
 
                 // Building names fade first; icons fade at the farthest zoom.
+                // Icons and names stay upright however the map is rotated.
                 ValueListenableBuilder<double>(
                   valueListenable: _mapZoom,
                   builder: (context, zoom, _) => MarkerLayer(
-                    markers: filteredBuildings.map((building) {
+                    rotate: true,
+                    markers: mapBuildings.map((building) {
                       final isSelected = _selectedBuilding?.id == building.id;
                       final markerStyle = buildingMarkerStyle(building);
                       final opacity =
@@ -1131,11 +1196,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 ),
 
                 // Labels appear progressively as the user zooms in. They never
-                // take taps away from the icon markers underneath.
+                // take taps away from the icon markers underneath. Both turn
+                // around the building's point, so the name stays below the
+                // icon on screen.
                 ValueListenableBuilder<double>(
                   valueListenable: _mapZoom,
                   builder: (context, zoom, _) => MarkerLayer(
-                    markers: filteredBuildings.map((building) {
+                    rotate: true,
+                    markers: mapBuildings.map((building) {
                       return Marker(
                         point: building.coordinate,
                         width: 120,
@@ -1246,6 +1314,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     markers: [
                       Marker(
                         point: _routeEtaLabelPoint!,
+                        rotate: true,
                         width: 76,
                         // Space for both the ETA pill and its map pointer.
                         // A 48px marker clipped this Column by about 3px.
@@ -1537,12 +1606,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                               .where(
                                                   (r) => r.id == entry.roomId)
                                               .firstOrNull;
-                                          _hasSelectedOrigin = false;
-                                          _selectedOrigin = _defaultOrigin;
+                                          _applyDefaultOrigin();
                                           _walkingRoute = null;
                                           _navigationState =
                                               NavigationUiState.chooseRoute;
                                         });
+                                        _locateForDefaultOrigin();
                                       },
                                     ),
                                   ),
@@ -1844,21 +1913,21 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   setState(() {
                     _historySessionId = null;
                     _selectedRoom = null;
-                    _hasSelectedOrigin = false;
-                    _selectedOrigin = _defaultOrigin;
+                    _applyDefaultOrigin();
                     _walkingRoute = null;
                     _navigationState = NavigationUiState.chooseRoute;
                   });
+                  _locateForDefaultOrigin();
                 },
                 onRoomDirectionsTap: (room) {
                   setState(() {
                     _historySessionId = null;
                     _selectedRoom = room;
                     _walkingRoute = null;
-                    _hasSelectedOrigin = false;
-                    _selectedOrigin = _defaultOrigin;
+                    _applyDefaultOrigin();
                     _navigationState = NavigationUiState.chooseRoute;
                   });
+                  _locateForDefaultOrigin();
                 },
               ),
             ),
